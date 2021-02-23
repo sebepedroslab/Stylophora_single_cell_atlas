@@ -66,7 +66,7 @@ scfigs_init(scdb_fig_dir)
 annot_dir <- "annotation_hydra"
 ```
 
-Get UMI counts matrix from Siebert et al. (Science 2019).
+Download UMI counts matrix from Siebert et al. (Science 2019) and 
 
 ```{r siebert_umi}
 require(Seurat)
@@ -96,99 +96,20 @@ setnames(umi_mat, "id", "")
 umi_table_file <- file.path(annot_dir, "Hydra_Seurat_Whole_Genome_filt_dup.tsv")
 fwrite(umi_mat, umi_table_file, sep = "\t")
 ```
-```{r siebert_umi_read, eval=FALSE}
-umi_table_file <- file.path(annot_dir, "Hydra_Seurat_Whole_Genome_filt_dup.tsv")
-umi_mat <- fread(umi_table_file, sep = "\t")
-```
-
-Get the list of TFs (by association with TF pfam domains) from Siebert et al. (Science 2019).
-
-```{r tf_pfam, eval=FALSE}
-#Load List of TF domains from Mendoza et al., 2013
-pfam.TFdomains <- read.table("hydra_single_cell/enrichment_resources/TF_domains.txt", stringsAsFactors = F)
-#add POU, COE, and PAX domains
-pfam.TFdomains <- c(pfam.TFdomains[,1], "PF00157", "PF00292", "PF16422", "PF16423")
-#load genome pfam annotations
-pfam.hits <- fread("hydra_single_cell/enrichment_resources/hydra.augustus.pfam.filtered.csv.gz")
-#remove extra columns
-pfam.hits <- pfam.hits[,1:5]
-setnames(pfam.hits, c("id","pfam_name","pfam_id","n","gene"))
-#eliminate stuff after decimal for transcriptome IDS
-pfam.hits[, pfam_id:=gsub("[.].*","",pfam_id)]
-#find transcripts with TF pfam hit
-pfam.hits.TFs <- pfam.hits[pfam_id %in% pfam.TFdomains,]
-#get rid of duplicate hits
-pfam.hits.TFs <- pfam.hits.TFs[!duplicated(pfam.hits.TFs$gene),]
-# format gene names
-pfam.hits.TFs[,gene:=sprintf("%s_1",gene)]
-# save
-setcolorder(pfam.hits.TFs, "gene")
-fwrite(
-  pfam.hits.TFs[,.(gene,pfam_id,pfam_name)], 
-  file.path(annot_dir,"hydra_TFs_pfam_hits.tsv"), sep="\t", col.names = FALSE
-)
-```
-
-Save gene mock annotation. 
-
-```{r mock_ann, eval=FALSE}
-# annotation by gene
-mock_gene_annot <- data.table(ann=rownames(seurat@raw.data))[
-  ,gene:=gsub("[.].*","",ann)][
-    ,blast:=str_extract(ann,"(?<=\\|).+")][
-      gene!="gfp"][
-        ,ann:=NULL]
-mock_gene_annot_grouped <- unique(mock_gene_annot) %>% 
-     group_by(gene) %>% 
-     mutate(blast_hits = paste(blast, collapse = ";"))
-mock_gene_annot_grouped <- unique(setDT(mock_gene_annot_grouped)[,blast:=NULL])
-
-# pfam domains by gene
-pfam.hits.grouped <- unique(pfam.hits[,.(pfam_name,pfam_id,gene)])%>% 
-     group_by(gene) %>% 
-     mutate(pfam_names = paste(pfam_name, collapse = ";")) %>%
-     mutate(pfam_ids = paste(pfam_id, collapse = ";")) 
-pfam.hits.mock <- unique(setDT(pfam.hits.grouped)[,.(gene,pfam_names,pfam_ids)])
-
-# add pfam domains to genes
-mock_gene_annot_pfam <- mock_gene_annot_grouped[pfam.hits.mock, on='gene']
-mock_gene_annot_pfam[is.na(blast_hits), blast_hits:=""]
-
-# format gene names
-mock_gene_annot_pfam[,gene:=sprintf("%s_1",gene)]
-
-# save mock gene annotation file
-setcolorder(mock_gene_annot_pfam,c("gene","pfam_names","blast_hits","pfam_ids"))
-fwrite(
-  mock_gene_annot_pfam, 
-  file.path(annot_dir, "hydra_mock_gene_annotation.tsv"), sep="\t", col.names=FALSE
-)
-
-# save mock TF annotation file
-fwrite(
-  mock_gene_annot_pfam[gene%in%pfam.hits.TFs$gene], 
-  file.path(annot_dir, "hydra_mock_TF_annotation.tsv"), sep="\t", col.names=FALSE
-)
-```
 
 Also get association of cells to cell types from  Siebert et al. (Science 2019).
 
-```{r siebert_ct, eval=FALSE}
-seurat <- readRDS("dryad/Hydra_Seurat_Whole_Genome.rds")
+```{r siebert_ct}
 dt <- data.table(
   cell=names(seurat@ident),
   cell_type=seurat@ident
 )
 cell_annot_file <- file.path(annot_dir, "Hydra_Seurat_Whole_Genome_cell_annot.tsv")
 fwrite(dt, cell_annot_file, sep="\t")
-```
-```{r siebert_ct_read, eval=FALSE}
-cell_annot_file <- file.path(annot_dir, "Hydra_Seurat_Whole_Genome_cell_annot.tsv")
 
 dt <- fread(cell_annot_file, sep="\t")
 mc_dt <- fread(file.path(scdb_dir, "hydra_mc_assigned_ct.csv"))[,.(cell,mc)]
 scr_transfer_annotations(dt=dt, mc_dt=mc_dt)
-gp
 ```
 
 # Metacell piepline 
@@ -274,7 +195,7 @@ mc_annotation <- unique(dt[,.(mc,assigned_ct)])
 setnames(mc_annotation, "assigned_ct", "ct")
 ```
 
-Add colours to metacells grouped by cell type.  
+Add temporary colours to metacells grouped by cell type.  
 
 ```{r mc_col}
 require(RColorBrewer)
@@ -301,10 +222,6 @@ Save cell and metacell annotations.
 fwrite(mc_annotation, mc_annotation_file, sep="\t")
 fwrite(dt, mc_cell_info_file, sep="\t")
 ```
-```{r, annot_files_read, eval=FALSE}
-mc_cell_info <- fread(mc_cell_info_file, sep="\t")
-mc_annotation <- fread(mc_annotation_file, sep="\t")
-```
 
 Barplot of metacells coloured by assigned cell type anottation.
 
@@ -330,98 +247,13 @@ gp <- ggplot(dt, aes(x=mc, fill=ct), colour="black") +
   scale_x_discrete(labels = NULL) +
   theme_minimal() + theme(panel.grid = element_blank()) +
   labs(x="metacells",y="percent of cells in mc")
-ggsave(file.path(scdb_fig_dir, "transfer_annot.png"), width = 16)
 ggplotly(gp)
 ```
 
-# Metacells visualization 
-
-```{r mcel_vis_setup}
-mc_id <- "mc_hydra"
-mat_id <- "mat_filt_ord"
-mc <- scdb_mc(mc_id)
-mat <- scdb_mat(mat_id)
-ann <- fread(file.path(scdb_dir,"Metacell_annotation_080420"))
-setnames(ann,c("metacell","cell_type","color","broad_cell_type","broad_color"))
-niche_order <- as.character(ann$metacell)
-niche_color <- ann$color
-# niche_order <- colnames(mc@mc_fp)
-```
-
-2D projection of metacells.
-
-```{r 2d_mc_proj}
-override_params("hydra_metacell_params.yaml","metacell")
-mcell_mc2d_force_knn(mc2d_id=sprintf("%s.2dproj",mc_id),mc_id=mc_id, graph_id="graphk100")
-mcell_mc2d_plot(mc2d_id=sprintf("%s.2dproj",mc_id))
-```
-
-Gene expression heatmaps.
-
-```{r}
-hms <- scp_plot_cmod_markers(
-  mc_object = mc, mat_object = mat,
-  clust_ord = niche_order, clust_col = niche_color,
-  output_file=file.path(scdb_fig_dir,sprintf("Gene_expression_%s",mc_id)),
-  width = 4000, height = 6000, plot_sc_width_cex = 2.5 ,plot_sc_height_cex = 1.5,
-  show_gene_names = TRUE, gene_font_size = 18, gene_chr_limit = 50,
-  mc_font_size = 20, mc_label_cex = 2,
-  gene_annot_file=file.path(annot_dir,"Hvul_merged_annotations"), 
-  per_clust_genes=20, gene_min_fold=3, transverality_N = round(ncol(mc@mc_fp)/2),
-  plot_sc=FALSE, print_heatmap=FALSE
-)
-# 575 genes
-```
-
-Visual co-ocurence matrix.  
-
-```{r mc_hierarchy}
-mc_hc <- mcell_mc_hclust_confu(mc_id=mc_id, graph_id="graphk100")
-mc_sup <- mcell_mc_hierarchy(mc_id=mc_id,mc_hc=mc_hc, T_gap=0.04)
-mcell_mc_plot_hierarchy(
-  mc_id=mc_id, 
-  graph_id="graphk100", 
-  mc_order=mc_hc$order, 
-  sup_mc=mc_sup, 
-  width=2800, 
-  height=4000,
-  min_nmc=2
-)
-```
-
-Marker genes heatmaps.  
-
-```{r mc_genes_heatmap}
-mcell_gset_from_mc_markers(gset_id=sprintf("%s.kaka",mc_id),mc_id,"clust_markers")
-mcell_mc_plot_marks(
-  mc_id=mc_id, gset_id="kaka", mat_id=mat_id,
-  mc_ord=niche_order, plot_cells=T
-)
-```
-
-Barplot of marker genes.  
-
-```{r mc_barplot_markers}
-scr_barplot_heatmap_markers(
-  mc_object = mc, mat_object = mat, 
-  markers_file = file.path("annotation","hydra_mock_TF_annotation.tsv"), sort_markers=TRUE,
-  heatmap_file = file.path(scdb_fig_dir, "barplot_filt_ord_heatmap_markers.png"), 
-  print_barplots=FALSE, barplot_dir = scdb_fig_dir, 
-  col = ct_cols, clust_order = mc_annotation$metacell, w = 8000
-)
-
-scr_plot_cmod_markers_ct_colors(
-  mc_object = mc, mat_object = mat, 
-  output_file = file.path(scdb_fig_dir, "plot_filt_ord_cmod_markers.png"), height=10000, width=6000,
-  gene_annot_file = file.path("annotation","hydra_mock_gene_annotation.tsv"), 
-  sn_table = file.path(scdb_dir, "hydra_metacell_annotation_filt_ord.tsv"), 
-  clust_ord = mc_annotation$metacell
-)
-```
 
 # Manual metacell solution 
 
-Load manual annotations - this is manually edited annotation file in which I reordered and/or reassigned some of the existing metacells, and killed some metacells.  
+Edit annotation file - reorder, reassign and kill some of the existing metacells.
 
 ```{r load_manual_annot}
 mc_annotation_file <- file.path(scdb_dir, "hydra_metacell_annotation_manual.tsv")
@@ -429,16 +261,9 @@ mc_annotation <- fread(mc_annotation_file, sep="\t")
 mc_cols <- mc_annotation$col
 names(mc_cols) <- mc_annotation$mc
 niche_order <- mc_annotation$mc
-
-scr_plot_cmod_markers2(
-  mc, mat,
-  clust_ord=niche_order, clust_col=mc_cols,
-  output_file=file.path(scdb_fig_dir,sprintf("%s.reorder.png",mc_id)), plot_sc = FALSE,
-  per_clust_genes=20, height=2000, gene_min_fold=2
-)
 ```
 
-Update mc objects after manual reordering and/or killing of metacells.  
+Update mc objects after manual reordering.  
 
 ```{r scdb_annot_update}
 # remove outliers
@@ -454,9 +279,6 @@ for (i in sort(out_mc)) {
 }
 
 mc_filt_ord <- mc_reorder(mc=mc_filt, ord=niche_order_new)
-
-# update colours
-# colours are perserved when names change
 
 # add new mc object to db
 # the mcs are now ordered and coloured by celltype and assigned names 1:ncol(mc_fp)
@@ -490,26 +312,6 @@ mc_cell_info <- mc_cell_info[mc_annotation, on="metacell"]
 fwrite(mc_cell_info, file.path(scdb_dir, "hydra_cell_annotation_filt_ord.tsv"),sep="\t")
 ```
 
-Load the final metacell solution.
-
-```{r final_mc_solution}
-mc <- scdb_mc("mc_filt_ord")
-mat <- scdb_mat("mat_filt_ord")
-
-mc_annotation_file <- file.path(scdb_dir, "hydra_metacell_annotation_filt_ord.tsv")
-mc_annotation <- fread(mc_annotation_file, sep="\t")
-mc_cols <- mc_annotation$col
-names(mc_cols) <- mc_annotation$metacell
-niche_order <- mc_annotation$metacell
-
-write.table(mc@mc_fp, file = "metacell/mc_fp.txt", sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
-umifrac_per_mc <- scr_gen_niche_counts(sc_object = mc, mat_object = mat, niche_order = niche_order)
-write.table(umifrac_per_mc, file = "metacell/umifrac_per_mc.txt", sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
-write.table(scr_niche_counts, file = "metacell/umicount_per_mc.txt", sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
-```
-
-Now I can redo the figures (go to `mcel_vis_setup` chunk).
-
 # Cell type annotations 
 
 Load objects from metacell database
@@ -527,33 +329,7 @@ Create reordered and annotated metacell object.
 annk <- fread("metacell/Metacell_annotation_reord")
 ctcol <- annk$color
 names(ctcol) <- annk$metacell
-```
-```{r}
-# clustering conf
-# confu <- mc_compute_norm_confu_matrix(mc_id,"graphk100")
-# hc_confu <- mc_confusion_clustering(confu,clust_method="average")
-# tree_confu <- as.phylo(hc_confu)
-# png(file.path(scdb_fig_dir,"tree_confu_hclust.png"),height=2400,width=1200,res=100)
-# plot(tree_confu,tip.color=ctcol[tree_confu$tip.label])
-# dev.off()
 
-# clustering cor
-# var_genes <- names(which(apply(mc@mc_fp,1,function(x) sort(x,decreasing=T)[2])>2)) # 3339
-# hc_cor <- hclust(dist(cor(mc@mc_fp[var_genes,],method="pearson")), "average")
-# tree_cor <- as.phylo(hc_cor)
-# png(file.path(scdb_fig_dir,"tree_vargenesfc2_hclust.png"),height=2400,width=1600,res=100)
-# plot(tree_cor,tip.color=ctcol[tree_cor$tip.label])
-# dev.off()
-
-# compare clustering
-# compare=phytools::cophylo(tree_cor, tree_confu)
-# png(file.path(scdb_fig_dir,"compare_tree_vargenes2fc_confu.png"),h=3000,w=2000)
-# plot(compare)
-# tiplabels.cophylo(pch=19,cex=3,col=ctcol[compare$trees[[1]]$tip.label],which="left")
-# tiplabels.cophylo(pch=19,cex=3,col=ctcol[compare$trees[[2]]$tip.label],which="right")
-# dev.off()
-```
-```{r}
 # reorder
 mc_reord <- mc_reorder(mc, as.integer(annk$metacell))
 mc_reord@colors <- annk$color
@@ -564,60 +340,14 @@ if (all(!grepl("$Hvul_",rownames(mc_reord@mc_fp)))) {
   rownames(mc_reord@e_gc) <- paste0("Hvul_",rownames(mc_reord@e_gc))
 }
 scdb_add_mc("mc_090820",mc_reord)
-# if (all(!grepl("$Hvul_",rownames(mat@mat)))) {
-#   rownames(mat@mat) <- paste0("Hvul_",rownames(mat@mat))
-#   scdb_add_mat(mat_id,mat)
-# }
 
 # save final annots
-ann_final <- file.path(scdb_dir,"Metacell_annotation_090820")
+ann_final <- file.path(scdb_dir,"Hvul_metacell_annotation")
 fwrite(annk[,metacell:=1:.N], ann_final, sep="\t")
 ```
 
-# Save metacell output files.
+Remove biological doublets
 
-```{r mc_save}
-mc_id <- "mc_hydra"
-mat_id <- "mat_filt_ord"
-mc <- scdb_mc(mc_id)
-mat <- scdb_mat(mat_id)
-
-ann_file <- file.path(scdb_dir,"Metacell_annotation_090820")
-ann <- fread(ann_file)
-fwrite(ann, file.path(scdb_dir,"Hvul_metacell_annotation"),sep="\t")
-
-write.table(
-  mc@mc_fp, file=file.path(scdb_dir, "Hvul_metacell_gene_FC"), 
-  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
-)
-
-mc_umis_list <- lapply(colnames(mc@mc_fp), function(x) {
-  cells <- names(mc@mc)[mc@mc==x]
-  Matrix::rowSums(mat@mat[,cells])
-})
-mc_umis <- do.call(cbind,mc_umis_list)
-colnames(mc_umis) <- colnames(mc@mc_fp)
-mc_umifrac <- mc_umis/rep(colSums(mc_umis),each=nrow(mc_umis))
-
-write.table(
-  mc_umis, file=file.path(scdb_dir, "Hvul_metacell_UMI_counts"), 
-  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
-)
-write.table(
-  mc_umifrac, file=file.path(scdb_dir, "Hvul_metacell_UMI_fractions"), 
-  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
-)
-
-cell_df <- data.table(
-  cell = mc@cell_names[!(mc@cell_names %in% mc@outliers)],
-  metacell = mc@mc
-)
-fwrite(cell_df, file=file.path(scdb_dir, "Hvul_metacell_assignments"), sep="\t")
-
-saveRDS(mat@mat[,names(mc@mc)], file=file.path(scdb_dir, "Hvul_sc_UMI_counts.RDS"))
-```
-
-## Part two 
 ```{r}
 mc_id <- "mc_090820"
 mat_id <- "mat_filt_ord"
@@ -636,10 +366,11 @@ names(mc_f@colors)=as.character(new_ann$metacell)
 scdb_add_mc("mc_100920",mc_f)
 fwrite(new_ann,file.path(scdb_dir,"Hvul_metacell_annotation"),sep="\t",col.names=TRUE)
 ```
+
 Save metacell output files.
 
 ```{r mc_save}
-mc_id <- "mc_100920"
+mc_id <- "mc_hydra"
 mat_id <- "mat_filt_ord"
 mc <- scdb_mc(mc_id)
 mat <- scdb_mat(mat_id)
@@ -681,7 +412,7 @@ fwrite(cell_df, file=file.path(scdb_dir, "Hvul_metacell_assignments"), sep="\t")
 Summarize metacells across cell types, and add to the database.
 
 ```{r ct_mc}
-mc_id <- "mc_100920"
+mc_id <- "mc_hydra"
 mat_id <- "mat_filt_ord"
 mat <- scdb_mat(mat_id)
 mc <- scdb_mc(mc_id)
@@ -694,7 +425,7 @@ mc_ct <- scr_cell_type_fp(
   mc_object = mc,
   mat_object = mat
 )
-scdb_add_mc(id="ct_100920",mc_ct)
+scdb_add_mc(id="ct_hydra",mc_ct)
 
 # save footprint
 write.table(
@@ -738,7 +469,7 @@ Group  cell types into broad cell types, and add to the database.
 
 ```{r bct_mc}
 #source("scr_plot_cmod_markers.R")
-mc_id <- "ct_100920"
+mc_id <- "ct_hydra"
 mat_id <- "mat_filt_ord"
 mat <- scdb_mat(mat_id)
 mc <- scdb_mc(mc_id)
@@ -751,17 +482,13 @@ mc_ct <- scr_cell_type_fp(
   mc_object = mc,
   mat_object = mat
 )
-scdb_add_mc(id="bct_090820",mc_ct)
+scdb_add_mc(id="bct_hydra",mc_ct)
 
 # save footprint
 write.table(
   mc_ct@mc_fp, file=file.path(scdb_dir, "Hvul_broad_cell_type_gene_FC"), 
   sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
 )
-
-# save mock ann
-ann[,metacell:=cell_type]
-# fwrite(unique(ann),file.path(scdb_dir,"Nvec_adult_cell_type_annotation"),sep="\t")
 
 # counts
 ct_umis_list <- lapply(colnames(mc_ct@mc_fp), function(y) {
@@ -838,7 +565,7 @@ mdf <- cbind.data.frame(num_markers=markers_num)
 fwrite(mdf,file.path(scdb_dir,"mdf.tsv"),sep="\t")
 ```
 
-Sequencing stats are from `Drop-seq_pipeline_initialQC/cell_estimation_initial_QC/Cell_QC_transcriptome.html` (on dryad)
+Sequencing stats are from `Drop-seq_pipeline_initialQC/cell_estimation_initial_QC/Cell_QC_transcriptome.html` (on Dryad)
 
 ```{r}
 sample_list <- c("D01-D1_S1","D01-P2_S4","D02-CO_S2", "D02-P1_S3", "D02-PB_S4", "D03-KI_S1", "D03-MA_S2", "D03-FM_S3","D06-FM_S1", "D06-MA_S3", "D06-KI_S4","D11-PO_S1","D11-BU_S2","D12-N1_S1","D12-N2_S2")

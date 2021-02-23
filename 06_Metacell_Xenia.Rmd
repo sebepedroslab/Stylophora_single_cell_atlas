@@ -66,10 +66,97 @@ annot_dir <- "annotation_xenia"
 ```
 
 # Metacell pipeline
+## Input data filtering
+
+Load the expression data to metacell database.  
+
+```{r mcell_import}
+# import UMI table
+mat_nm <- "xenia"
+mcell_import_multi_mars(
+  mat_nm = mat_nm,
+  dataset_table_fn = file.path(cluster_dir, "MARS_Batches.txt"),
+  base_dir = "umi.tab",
+  force = TRUE
+)
+mat <- scdb_mat(mat_nm)
+```
+
+Filter ERCCs
+
+```{r mcell_filter_genes}
+erccs <- rownames(mat@mat)[grepl("ERCC",rownames(mat@mat))] 
+peaks_counts <- rowSums(as.matrix(mat@mat[grepl("_peak_",rownames(mat@mat)),]))
+peaks_ignore <- names(which(peaks_counts<100))
+mcell_mat_ignore_genes(new_mat_id = mat_nm, mat_id = mat_nm, ig_genes = c(erccs,peaks_ignore))
+mat <- scdb_mat(mat_nm)
+```
+
+Filter by cell depth (UMIs/cell)
+
+```{r mcell_filter}
+x <- colSums(as.matrix(mat@mat))
+mcell_plot_umis_per_cell(mat_id = mat_nm, min_umis_cutoff = 100)
+large_cells <- names(which(x>10000))
+small_cells <- names(which(x<100))
+mat_nm_filt <- "mat_nowholev2"
+mcell_mat_ignore_cells(new_mat_id = mat_nm_filt ,mat_id = mat_nm, ig_cells=c(small_cells,large_cells))
+mat <- scdb_mat(mat_nm_filt)
+```
+
+Calculate gene statistics
+
+```{r mcell_gstat}
+mcell_add_gene_stat(gstat_id = "gstat", mat_id = mat_nm_filt, force = TRUE)
+mat <- scdb_mat(mat_nm_filt)
+```
+
+## Building metacells
+
+Select marker genes for building metacell graph.  
+
+```{r mcell_markers}
+#bkg <- readLines(file.path(annot_dir,"black_list_genes"))
+mcell_gset_filter_multi(
+  gstat_id = "gstat",
+  gset_id = "clust_markers",
+  T_tot = 30, T_top3 = 2, T_szcor = -0.05, T_niche = 0.05, 
+  blacklist = bkg, force_new=TRUE
+)
+mcell_plot_gstats(gstat_id = "gstat", gset_id = "clust_markers")
+```
+
+Build metacells
+
+```{r mcell_knn}
+# build cell graph
+mcell_add_cgraph_from_mat_bknn(
+  mat_id = mat_nm_filt,
+  gset_id = "clust_markers",
+  graph_id = "graphk100", K = 100, dsamp=FALSE
+)
+
+# resample graph and compute metacells for each resampling
+mcell_coclust_from_graph_resamp(
+  coc_id = "coc500_min20",
+  graph_id = "graphk100",
+  min_mc_size = 20, p_resamp = 0.75, n_resamp = 1000
+)
+
+# final graph and metacells from co-occurence in resampled graphs
+mcell_mc_from_coclust_balanced(
+  mc_id = "mc_k30",
+  coc_id = "coc500_min20",
+  mat_id = mat_nm_filt,
+  K = 30, min_mc_size = 20, alpha = 2 # changed from K=100
+)
+
+mc <- scdb_mc("mc_k30")
+```
 
 ## Filtering bad metacells
 
-```{r mcell_load_filt, echo=FALSE, eval=TRUE}
+```{r mcell_load_filt}
 mc_id <- "mc_k30_nowholev2_bl"
 mat_id <- "mat_nowholev2"
 mat <- scdb_mat(mat_id)
@@ -83,7 +170,7 @@ The following criteria are used for filtering out bad metacells:
 
 * **number of genes with non-zero UMIs** summarized across all cells in metacell - metacells consisting of cells that express very low number of genes are potentially bad metacells
 
-```{r nonzero_umi, eval=TRUE}
+```{r nonzero_umi}
 # count genes with non-zero UMIs in single cells
 csums <- lapply(mcs, function(mcid) {
   mc_cells <- names(mc@mc[mc@mc==mcid])
@@ -104,7 +191,7 @@ csumsdtmean <- csumsdt[,.SD[,.(
 
 * **total number of UMIs** summed across all cells in metacell - metacells consisting of very small cells, with a low UMI count, are potentially bed metacells.
 
-```{r total_umi, eval=TRUE}
+```{r total_umi}
 # count total UMIs in cells
 umisums <- lapply(mcs, function(mcid) {
   mc_cells <- names(mc@mc[mc@mc==mcid])
@@ -121,35 +208,28 @@ umisumsdtsum <- umisumsdt[,.(total_umis=sum(total_umis_per_cell)),mc]
 
 By combining the previous criteria we identify a pool of potentially bad metacells as those with non-zero UMI counts and total UMI counts below respective distribution peak. 
 
-```{r mc_filt_bad, eval=TRUE}
+```{r mc_filt_bad}
 # combine the metrics
 dt <- csumsdtmean[umisumsdtsum,on="mc"]
 
 # non-zero UMI genes threshold
 dnonzeroumi <- density(dt$non_zero_genes_peak,adjust=0.4)
 nonzerothrs <- 70
-plot(dnonzeroumi,main="non-zero UMIs"); abline(v=nonzerothrs)
 
 # total UMI threshold
 dumi <- density(dt$total_umis,adjust=0.3)
 totumithrs <- 16000
-plot(dumi,main="total UMIs"); abline(v=totumithrs)
 ```
 
 As a final criteria, we retain those potentially bad metacells that express more than 2 known TFs, if they also have moe than 1k UMIs
 
 * **expression of known TFs**
 
-```{r mc_filt_tf, eval=TRUE, fig.width=12, fig.height=3}
+```{r mc_filt_tf}
 TFs_dt <- fread(file.path(annot_dir,"all_tfs_2020-07-08_groups_Xesp_curated.csv"), header=FALSE)
 # number of TFs expressed in metacells
 tfs <- intersect(TFs_dt$V1,rownames(mc@mc_fp))
 tfsmc <- apply(mc@mc_fp[tfs,],2,function(x) sum(x>2.5))
-#png(file.path(scdb_fig_dir,sprintf("num_tfs_barplot.png")),width=1800,height=300)
-barplot(tfsmc,las=2,xlab="metacell",ylab="number of TFs")
-tfthrs <- 5
-abline(h=tfthrs)
-#dev.off()
 ```
 
 Inspect metacells' statistics. 
@@ -170,12 +250,6 @@ gp <- ggplot(dtt,aes(non_zero_genes_peak,total_umis,label=mc,color=status)) +
   scale_y_log10() + scale_x_log10() +
   labs(x="non-zero UMIs", y="total UMIs") +
   guides(colour=guide_legend(title="metacell",override.aes=list(size=6)))
-#ggplotly(gp)
-#gp
-ggsave(
-  file.path(scdb_fig_dir,sprintf("killing_%.0fnonzeroUMI_%.0ftotUMI_%s_TFs.png",nonzerothrs,totumithrs,tfthrs)),
-  gp,width=10,height=8
-)
 ```
 
 Remove bad metacells.
@@ -193,8 +267,8 @@ scdb_add_mc("mc_kill",mc)
 Load data 
 
 ```{r load_data_comp}
-mc_id <- ""
-mat_id <- ""
+mc_id <- "mc_kill"
+mat_id <- "mat_nowholev2"
 mc <- scdb_mc(mc_id)
 mat <- scdb_mat(mat_id)
 ```
@@ -202,9 +276,9 @@ mat <- scdb_mat(mat_id)
 Nvec data
 
 ```{r load_nvec_comp, eval=TRUE}
-old_mcfp <- read.table("/users/asebe/aelek/proj/scRNAseq_nvec_v3/clustering_adult/Xesp_metacell_gene_FC")
-old_assign <- fread("/users/asebe/aelek/proj/scRNAseq_nvec_v3/clustering_adult/Xesp_metacell_assignments")
-old_annot <- "/users/asebe/aelek/proj/scRNAseq_nvec_v3/clustering_adult/Metacell_annotation_071320"
+old_mcfp <- read.table("clustering_nematostella/Nvec_metacell_gene_FC")
+old_assign <- fread("clustering_nematostella/Nvec_metacell_assignments")
+old_annot <- "clustering_nematostella/Nvec_metacell_annotation"
 setnames(old_assign,c("cell","metacell"))
 colnames(old_mcfp) <- str_remove(colnames(old_mcfp),"X")
 var_genes <- names(which(apply(old_mcfp,1,max)>2))
@@ -215,11 +289,9 @@ Correlation with Nvec
 ```{r nvec_comp}
 cor_method <- "spearman"
 comp_method = "jaccard"
-#gene_list <- list("vargenes"=var_genes)
-gi <- 1
 cors <- sca_clustering_correlation(
   matrix1 = old_mcfp, matrix2 = mc@mc_fp, 
-  markers = gene_list[[gi]], 
+  markers = var_genes, 
   original_ordering_1st = TRUE, original_ordering_2nd = TRUE,
   annotation_file_1 = old_annot,
   cor_method = cor_method, pmin = 0.8,
@@ -228,33 +300,33 @@ cors <- sca_clustering_correlation(
 )
 lfc_threshold <- 1.2
 jacc <- sca_clustering_comparison(
-  matrix1 = old_mcfp, matrix2 = mc@mc_fp, markers = gene_list[[gi]], lfc_threshold = lfc_threshold,
+  matrix1 = old_mcfp, matrix2 = mc@mc_fp, markers = var_genes, lfc_threshold = lfc_threshold,
   original_ordering_1st = TRUE, original_ordering_2nd = TRUE, comp_method = comp_method, 
   annotation_file_1 = old_annot,
   output_file = file.path(
-    scdb_fig_dir,sprintf("xenia_%s_vs_nvec_%s_%s_%s.png",mc_id,comp_method,names(gene_list)[gi],lfc_threshold)
+    scdb_fig_dir,sprintf("xenia_%s_vs_nvec_%s_%s.png",mc_id,comp_method,lfc_threshold)
   ), height = 2300, width = 2400
 )
 ```
 
 Save cell and metacell annotations.  
 
-```{r, annot_files_save}
+```{r annot_files_save}
 mc <- scdb_mc("mc_filt")
 mc_annotation <- unique(cell_annotation[,.(mc,cell_type,colour)])
 mc_cell_info <- cell_annotation[,.(cell,mc,cell_type,colour)]
 
-mc_annotation_file <- file.path(scdb_dir,"Adult_metacell_annotation")
-mc_cell_info_file <- file.path(scdb_dir,"Adult_cell_annotoation")
+mc_annotation_file <- file.path(scdb_dir,"Xenia_metacell_annotation")
+mc_cell_info_file <- file.path(scdb_dir,"Xenia_cell_annotoation")
 
 fwrite(mc_annotation, mc_annotation_file, sep="\t")
 fwrite(mc_cell_info, mc_cell_info_file, sep="\t")
 ```
 
-Fix transferrerd annotations after inspecting 2d plot and heatmap
+Modify transferrerd annotations after inspecting 2d plot and heatmap and update metacell object.
 
 ```{r fix_cols}
-mc_annotation_file <- file.path(scdb_dir,"Adult_metacell_annotation_transferred")
+mc_annotation_file <- file.path(scdb_dir,"Xenia_metacell_annotation")
 mc_annotation <- fread(mc_annotation_file, sep="\t")
 
 # update metacells colors
@@ -266,37 +338,21 @@ mc@colors <- niche_col_new
 scdb_add_mc(id="mc_filt", mc=mc)
 ```
 
-
 # Cell type annotations
 
 Load objects from metacell database
 
 ```{r transfer_annots_setup}
-mc_id <- "mc_071420"
+mc_id <- "mc_filt"
 mat_id <- "mat_nowholev2"
 mat <- scdb_mat(mat_id)
 mc <- scdb_mc(mc_id)
 ```
 
-Save annotation file to use for reordering and annotating metacells. 
-
-```{r mc_annot_template, eval=FALSE}
-annk <- fread("clustering_coral/scdb/Metacell_annotation_original_order")
-cell_types <- c(
-  "Epidermis1","Epidermis2","Epidermis3",
-  "Gastrodermis1","Gastrodermis2","Gastrodermis3",
-  "Muscle","Cnidocyte","Cnidocyte_precursor","Precursor","Dig_filaments","Gland_secretory",
-  paste0("Neuron",1:19), paste0("Unknown",1:5)
-)
-annk$cell_type <- factor(annk$cell_type,levels=cell_types)
-setorder(annk,cell_type,metacell)
-fwrite(annk,"clustering_coral/scdb/Metacell_annotation_reord",sep="\t")
-```
-
-Create reordered and annotated metacell object.
+Create reordered, filtered and annotated metacell object.
 
 ```{r mc_reord_annot}
-annk <- fread("clustering_coral/scdb/Metacell_annotation_071420_reord")
+annk <- fread("Xesp_metacell_annotation_reord")
 
 # reorder
 mc_reord <- mc_reorder(mc, as.integer(annk$metacell))
@@ -308,23 +364,22 @@ mc_kill <- mc_update_stats(mc_kill,mat)
 ann <- annk[cell_type!="KILL"]
 
 # add mc object
-scdb_add_mc("mc_083120",mc_kill)
+scdb_add_mc("mc_xenia",mc_kill)
 
 # save final annots
-ann_final <- file.path(scdb_dir,"Metacell_annotation_083120")
+ann_final <- file.path(scdb_dir,"Xesp_metacell_annotation")
 fwrite(annk[,cell_type!="KILL"][,metacell:=1:.N], ann_final, sep="\t")
 ```
 
 Save metacell output files.
 
 ```{r mc_save}
-mc_id <- "mc_083120"
+mc_id <- "mc_xenia"
 mat_id <- "mat_nowholev2"
 mc <- scdb_mc(mc_id)
 mat <- scdb_mat(mat_id)
-ann_file <- file.path(scdb_dir,"Metacell_annotation_083120")
+ann_file <- file.path(scdb_dir,"Xesp_metacell_annotation")
 ann <- fread(ann_file)
-fwrite(ann, file.path(scdb_dir,"Xesp_metacell_annotation"), sep="\t")
 
 write.table(
   mc@mc_fp, file=file.path(scdb_dir, "Xesp_metacell_gene_FC"), 
@@ -354,7 +409,6 @@ cell_df <- data.table(
 )
 fwrite(cell_df, file=file.path(scdb_dir, "Xesp_metacell_assignments"), sep="\t")
 
-saveRDS(mat@mat[,names(mc@mc)], file=file.path(scdb_dir, "Xesp_sc_UMI_counts.RDS"))
 ```
 
 
@@ -363,8 +417,7 @@ saveRDS(mat@mat[,names(mc@mc)], file=file.path(scdb_dir, "Xesp_sc_UMI_counts.RDS
 Summarize metacells across cell types, and add to the database.
 
 ```{r ct_mc}
-#source("scr_plot_cmod_markers.R")
-mc_id <- "mc_083120"
+mc_id <- "mc_xenia"
 mat_id <- "mat_nowholev2"
 mat <- scdb_mat(mat_id)
 mc <- scdb_mc(mc_id)
@@ -377,16 +430,13 @@ mc_ct <- sca_cell_type_fp(
   mc_object = mc,
   mat_object = mat
 )
-scdb_add_mc(id="ct_083120",mc_ct)
+scdb_add_mc(id="ct_xenia",mc_ct)
 
 # save footprint
 write.table(
   mc_ct@mc_fp, file=file.path(scdb_dir, "Xesp_cell_type_gene_FC"), 
   sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
 )
-# save mock ann
-ann[,metacell:=cell_type]
-#fwrite(unique(ann),file.path(scdb_dir,"Xesp_cell_type_annotation"),sep="\t")
 
 # counts
 ct_umis_list <- lapply(colnames(mc_ct@mc_fp), function(y) {
@@ -420,8 +470,7 @@ fwrite(cell_df, file=file.path(scdb_dir, "Xesp_cell_type_assignments"), sep="\t"
 Group  cell types into broad cell types, and add to the database.
 
 ```{r bct_mc}
-#source("scr_plot_cmod_markers.R")
-mc_id <- "ct_083120"
+mc_id <- "ct_xenia"
 mat_id <- "mat_nowholev2"
 mat <- scdb_mat(mat_id)
 mc <- scdb_mc(mc_id)
@@ -429,22 +478,18 @@ ann_file <- file.path(scdb_dir,"Xesp_broad_cell_type_annotation")
 ann <- fread(ann_file)
 
 # calculate mc object with mc_fp by cell type
-mc_ct <- scr_cell_type_fp(
+mc_ct <- sca_cell_type_fp(
   input_table = ann_file,
   mc_object = mc,
   mat_object = mat
 )
-scdb_add_mc(id="bct_083120",mc_ct)
+scdb_add_mc(id="bct_xenia",mc_ct)
 
 # save footprint
 write.table(
   mc_ct@mc_fp, file=file.path(scdb_dir, "Xesp_broad_cell_type_gene_FC"), 
   sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
 )
-
-# save mock ann
-ann[,metacell:=cell_type]
-#fwrite(unique(ann),file.path(scdb_dir,"Xesp_broad_cell_type_annotation"),sep="\t")
 
 # counts
 ct_umis_list <- lapply(colnames(mc_ct@mc_fp), function(y) {
@@ -478,7 +523,7 @@ fwrite(cell_df, file=file.path(scdb_dir, "Xesp_broad_cell_type_assignments"), se
 Load objects from metacell database
 
 ```{r}
-mc_id <- "mc_083120"
+mc_id <- "mc_xenia"
 mat_id <- "mat_nowholev2"
 mat <- scdb_mat(mat_id)
 mc <- scdb_mc(mc_id)
@@ -568,7 +613,6 @@ done
 Summarize
 
 ```{r}
-
 cdt <- fread(file.path(scdb_dir,"cdt.tsv"))
 cdt[,dataset:=str_extract(cells,'(tentacle|whole|stalk)_v\\d+')]
 dt <- merge.data.table(

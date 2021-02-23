@@ -437,17 +437,17 @@ mc_fp_spis_xesp_hvul <- fread.table(file.path(outdir,"Spis_Xesp_Hvul_cell_type_g
 Output dir
 
 ```{r}
-plotdir <- file.path(outdir,"vioin")
-dir.create(outdir,showWarnings=FALSE)
+plotdir <- file.path(outdir,"violins")
+dir.create(plotdir,showWarnings=FALSE)
 ```
 
 Get cell types for which to plot expression - these are top connected cell types in pairwise circos plots.
 
 ```{r pairwise_links}
 circos_files <- c(
-  "cross_species/circos/circos_Spis_Nvec_ct_kld_0.98.RDS",
-  "cross_species/circos/circos_Spis_Xesp_ct_kld_0.98.RDS",
-  "cross_species/circos/circos_Spis_Hvul_ct_kld_0.98.RDS"
+  "cross_species/cell_type/circos/circos_Spis_Nvec_ct_kld_0.98.RDS",
+  "cross_species/cell_type/circos/circos_Spis_Xesp_ct_kld_0.98.RDS",
+  "cross_species/cell_type/circos/circos_Spis_Hvul_ct_kld_0.98.RDS"
 )
 kld_list <- lapply(circos_files, function(circos_file) {
   kld <- readRDS(circos_file)
@@ -489,7 +489,11 @@ cts_list <- c(ngl_list,lwd_list)
 Get common genes for groups of cell types
 
 ```{r}
-feature_in_thrs=1.2; feature_out_thrs=1.8,
+# feature_in_thrs=1.2; feature_out_thrs=1.8; abs_leakyness=0.1; abs_leakynessbg=0.1 # violin
+# feature_in_thrs=1.5; feature_out_thrs=100; abs_leakyness=0; abs_leakynessbg=0 # violin2
+# feature_in_thrs=1.2; feature_out_thrs=100; abs_leakyness=0; abs_leakynessbg=0 # violin3
+feature_in_thrs=1.3; feature_out_thrs=100; abs_leakyness=0; abs_leakynessbg=0 # violins
+
 gene_list <- lapply(names(cts_list), function(i) {
   
   ct <- cts_list[[i]]
@@ -517,9 +521,9 @@ gene_list <- lapply(names(cts_list), function(i) {
   message("ncol mc_fp:", ncol(mc_fp))
   
   cgenes <- commonGenes(
-    mc_fp, cols=ct, feature_in_thrs=1.2, feature_out_thrs=1.8,
+    mc_fp, cols=ct, feature_in_thrs=feature_in_thrs, feature_out_thrs=feature_out_thrs,
     method="absolute", methodbg="absolute", 
-    abs_leakyness = 0.1, abs_leakynessbg = 0.1
+    abs_leakyness=abs_leakyness, abs_leakynessbg=abs_leakynessbg
   )
   message("shared ogs: ",length(cgenes[[1]]))
   cgenes
@@ -542,7 +546,7 @@ orthdt <- rbindlist(lapply(names(gene_list),function(i) {
 }))
 fwrite(
   orthdt, 
-  file.path(outdir,sprintf("selected.neuro.gland.orthologs.fc%s.fcout%s.violin.tsv",feature_in_thrs,feature_out_thrs)),
+  file.path(plotdir,sprintf("selected.neuro.gland.orthologs.fc%s.fcout%s.violin.tsv",feature_in_thrs,feature_out_thrs)),
   sep="\t",col.names=TRUE
 )
 ```
@@ -592,11 +596,10 @@ plot_list <- lapply(names(cts_list), function(i) {
   }
 })
 plot_list_final <- plot_list[!sapply(plot_list,is.null)]
-#gp=egg::ggarrange(plots=plot_list_final, ncol=1, left="gene expression fold change")
 
 # single plot
 pdf(
-  file.path(plotdir,sprintf("pairwise.ct.expression.fc%s.fcout%s.violin.tsv",feature_in_thrs,feature_out_thrs)),
+  file.path(plotdir,sprintf("pairwise.ct.expression.fc%s.fcout%s.violin.pdf",feature_in_thrs,feature_out_thrs)),
   width=5,height=length(plot_list_final)*2,useDingbats=TRUE
 )
 grid.newpage()
