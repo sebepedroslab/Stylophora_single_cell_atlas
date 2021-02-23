@@ -1,0 +1,1697 @@
+---
+title: "08. Cross-species comparison"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+auhor: "Anamaria Elek"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    toc_depth: 2
+---
+```{r options, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE, fig.align = 'center')
+```
+
+# Set up the analysis
+
+Load required packages and functions.
+
+```{r setup, warning=FALSE,message=FALSE}
+library(data.table)
+library(stringr)
+library(ape)
+library(tidytree)
+library(treeio)
+library(dendextend)
+library(phangorn)
+library(phytools)
+library(ComplexHeatmap)
+#library(ggpubr)
+#library(ggrepel)
+#library(wesanderson)
+#library(topGO)
+#library(KEGGREST)
+library(eulerr)
+library(ggplot2)
+theme_py <- theme_classic() + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_rect(colour = "black", fill = NA),
+  text = element_text(size=20)
+)
+theme_set(theme_py)
+# load functions for downstream analysis
+scripts <- list.files("metacell_downstream_functions",full.names=TRUE)
+for (file in scripts) source(file)
+```
+
+# Prepare annotation files
+
+Species pairs
+
+```{r eval=FALSE}
+broccoli=fread("annotations/orthologous_pairs.txt",header=FALSE)
+# /users/asebe/asebe/proj/scRNAseq_coral/Broccoli/broccoli_metazoa_repeat/dir_step4/orthologous_pairs.txt
+setnames(broccoli, c("gene1","gene2"))
+tfs=fread("annotations/pairs_cnidaria_closeparalogs-nr_2020-10-23.csv",header=TRUE)[,1:2] setnames(tfs,c("gene1","gene2"))
+
+og_pairs_dir <- "annotations/og_pairs_metazoa"
+dir.create(og_pairs_dir,showWarnings=FALSE)
+
+save_pairs <- function(sp1,sp2,outdir=og_pairs_dir) {
+  
+  broccoli_pairs=unique(rbindlist(list(
+    broccoli[grepl(sp1,gene1)&grepl(sp2,gene2)][,1:2],
+    broccoli[grepl(sp1,gene2)&grepl(sp2,gene1)][,2:1]
+  ),use.names=FALSE))
+  
+  tfs_pairs=unique(rbindlist(list(
+    tfs[grepl(sp1,gene1)&grepl(sp2,gene2)][,1:2],
+    tfs[grepl(sp1,gene2)&grepl(sp2,gene1)][,2:1]
+  ),use.names=FALSE))
+  fwrite(tfs_pairs,file.path(outdir,sprintf("%s_%s_tfs_og_pairs.txt",sp1,sp2)),sep="\t")
+  
+  # remove all broccoli pairs for which any of the genes appear in TFs annotation
+  broccoli_pairs <- broccoli_pairs[!(gene1 %in% tfs_pairs$gene1 | gene1 %in% tfs_pairs$gene2)]
+  broccoli_pairs <- broccoli_pairs[!(gene2 %in% tfs_pairs$gene1 | gene2 %in% tfs_pairs$gene2)]
+  
+  all_pairs=rbindlist(list("broccoli"=broccoli_pairs,"tfs"=tfs_pairs))
+  
+  fwrite(all_pairs,file.path(outdir,sprintf("%s_%s_og_pairs.txt",sp1,sp2)),sep="\t",col.names=FALSE)
+  
+}
+
+save_pairs("Spis","Nvec")
+save_pairs("Spis","Xesp")
+save_pairs("Spis","Hvul")
+save_pairs("Nvec","Spis")
+save_pairs("Nvec","Xesp")
+save_pairs("Nvec","Hvul")
+save_pairs("Xesp","Spis")
+save_pairs("Xesp","Nvec")
+save_pairs("Xesp","Hvul")
+save_pairs("Hvul","Spis")
+save_pairs("Hvul","Nvec")
+save_pairs("Hvul","Xesp")
+```
+
+# Pairwise cell type level comparison
+## Data
+
+Output directory
+
+```{r}
+outdir <- "cross_species/cell_type"
+dir.create(outdir,showWarnings=FALSE)
+```
+
+Each of the following three code chunks defines set of input files for one pairwise species comparison.  
+
+```{r spis_nvec}
+sp1="Spis"
+sp2="Nvec"
+sp=paste(c(sp1,sp2),collapse="_")
+sp1_fp_fn="clustering_coral/scdb/Spis_coral_cell_type_gene_FC"
+sp2_fp_fn="clustering_nematostella/scdb/Nvec_adult_cell_type_gene_FC"
+sp1_mcann="clustering_coral/scdb/Spis_coral_metacell_annotation"
+sp2_mcann="clustering_nematostella/scdb/Nvec_adult_metacell_annotation"
+sp1_ctann="clustering_coral/scdb/Spis_coral_cell_type_annotation"
+sp2_ctann="clustering_nematostella/scdb/Nvec_adult_cell_type_annotation"
+sp1_bctann="clustering_coral/scdb/Spis_coral_broad_cell_type_annotation"
+sp2_bctann="clustering_nematostella/scdb/Nvec_adult_broad_cell_type_annotation"
+OG_pairs_fn="annotation/og_pairs_metazoa/Spis_Nvec_og_pairs.txt"
+```
+
+```{r spis_xesp}
+sp1="Spis"
+sp2="Xesp"
+sp=paste(c(sp1,sp2),collapse="_")
+sp1_fp_fn="clustering_coral/scdb/Spis_coral_cell_type_gene_FC"
+sp2_fp_fn="clustering_xenia/scdb/Xesp_cell_type_gene_FC"
+sp1_mcann="clustering_coral/scdb/Spis_coral_metacell_annotation"
+sp2_mcann="clustering_xenia/scdb/Xesp_metacell_annotation"
+sp1_ctann="clustering_coral/scdb/Spis_coral_cell_type_annotation"
+sp2_ctann="clustering_xenia/scdb/Xesp_cell_type_annotation"
+sp1_bctann="clustering_coral/scdb/Spis_coral_broad_cell_type_annotation"
+sp2_bctann="clustering_xenia/scdb/Xesp_broad_cell_type_annotation"
+OG_pairs_fn="annotation/og_pairs_metazoa/Spis_Xesp_og_pairs.txt"
+```
+
+```{r spis_hvul}
+sp1="Spis"
+sp2="Hvul"
+sp=paste(c(sp1,sp2),collapse="_")
+sp1_fp_fn="clustering_coral/scdb/Spis_coral_cell_type_gene_FC"
+sp2_fp_fn="clustering_hydra/scdb/Hvul_cell_type_gene_FC"
+sp1_mcann="clustering_coral/scdb/Spis_coral_metacell_annotation"
+sp2_mcann="clustering_hydra/scdb/Hvul_metacell_annotation"
+sp1_ctann="clustering_coral/scdb/Spis_coral_cell_type_annotation"
+sp2_ctann="clustering_hydra/scdb/Hvul_cell_type_annotation"
+sp1_bctann="clustering_coral/scdb/Spis_coral_broad_cell_type_annotation"
+sp2_bctann="clustering_hydra/scdb/Hvul_broad_cell_type_annotation"
+OG_pairs_fn="annotation/og_pairs_metazoa/Spis_Hvul_og_pairs.txt"
+```
+
+Save orthologs expression data
+
+```{r}
+csps=csps_create_crossspecies_object(
+  sp1_fp_fn = sp1_fp_fn,
+  sp2_fp_fn = sp2_fp_fn, 
+  OG_pairs_fn = OG_pairs_fn, 
+  sp_names = paste0(c(sp1,sp2),"_"), make_sp_colnames = TRUE, quant_norm = TRUE, one2one = FALSE
+)
+mc_fp=csps$merged
+write.table(mc_fp, file.path(outdir,sprintf("%s_cell_type_gene_FC",sp)),sep="\t",quote=FALSE)
+```
+
+## KLD
+
+Calculate KLD using all orthologs expression.  
+
+```{r}
+kld <- calcKLD(mc_fp)
+saveRDS(kld$mat,file.path(outdir,sprintf("%s_ct_kld.RDS",sp)))
+```
+
+## Circos
+
+Cell type annotations.
+
+```{r}
+ctann=rbindlist(list(
+  fread(sp1_ctann)[,metacell:=paste(sp1,metacell,sep="_")],
+  fread(sp2_ctann)[,metacell:=paste(sp2,metacell,sep="_")]
+))
+ctcol=ctann$color
+ctmc=ctann$metacell
+names(ctcol)=ctmc
+ctlabs=str_remove(ctmc,"(Spis_)|(Nvec_)|(Xesp_)|(Hvul_)")
+names(ctlabs)=ctmc
+ctsp=substr(ctmc,1,4)
+names(ctsp)=ctmc
+spfullnames=c("Spis"="Stylophora pistillata","Xesp"="Xenia sp.","Nvec"="Nematostella vectensis", "Hvul"="Hydra vulgaris")
+```
+
+Setup circos plotting.  
+```{r}
+plotdir <- file.path(outdir,"circos")
+dir.create(plotdir,showWarnings=FALSE)
+sectors.order=ctann$metacell
+sector.labels=ctann$cell_type
+# make names a bit shorter to make my life easier
+sector.labels=str_replace_all(
+  sector.labels, 
+  c("i_gland_cell/neuron_progenitor"="i_gland_cell/neuron_prog",
+    "i_female_germline_1"="i_female_germline",
+    "i_femalge_germline_2_nurse_cell"="i_female_germline_nurse",
+    "i_granular_mucous_gland_cell"="i_granular_mucous_gland",
+    "i_spumous_mucous_gland_cell"="i_spumous_mucous_gland",
+    "i_zymogen_gland_cell"="i_zymogen_gland"
+  )
+)
+names(sector.labels)=sectors.order
+sectors.colors=ctann$color
+names(sectors.colors)=sectors.order
+sectors.groups=str_extract(sectors.order,paste(sp1,sp2,sep="|"))
+names(sectors.groups)=sectors.order
+```
+
+Plot circos diagram.
+
+```{r}
+circos_file <- file.path(outdir,sprintf("%s_ct_kld.RDS",sp))
+suff <- str_remove_all(basename(circos_file),sprintf("%s_|\\.RDS",sp))
+kld <- readRDS(circos_file)
+threshold=NULL
+threshold.quantile=0.97
+annotation.names=TRUE
+if(annotation.names==TRUE) {
+  sector.groups.padding=c(0.1,0,2.3,0)
+  sector.groups.col="gray98"
+  sector.groups.border="gray88"
+  sector.groups.text.cex=0.68
+  sector.groups.text.vjust=-6
+  big.gap=5
+} else {
+  sector.groups.padding=c(0.1,0,0.1,0)
+  sector.groups.col="white"
+  sector.groups.border="white"
+  sector.groups.text.cex=1
+  sector.groups.text.vjust=0.5
+  big.gap=10
+}
+name.suffix=sprintf("%s_%s%s",suff,threshold.quantile,ifelse(annotation.names,"","_without_names"))
+title.main=suff
+title.sub=sprintf("(threshold: %sq)",threshold.quantile)
+chord=csps_plot_chord_diagram(
+  mat=kld, sp=c(sp1,sp2), revert=TRUE, 
+  regularize.values=FALSE, scale.values=TRUE, threshold=threshold, threshold.quantile=threshold.quantile,
+  save.plot=TRUE, save.data=TRUE, 
+  outdir=plotdir, name.suffix=name.suffix, width=9.5, height=9.5,
+  sectors.order=sectors.order, sectors.labels=sector.labels, sectors.colors=sectors.colors, 
+  sectors.groups=sectors.groups, sectors.groups.labels=spfullnames, 
+  start.degree=0, big.gap=big.gap, annotation.track=TRUE,
+  annotation.names=annotation.names, sector.groups.padding=sector.groups.padding,
+  self.links=FALSE, sector.text.cex=0.38, 
+  sector.groups.col=sector.groups.col, sector.groups.border=sector.groups.border,
+  sector.groups.text.cex=sector.groups.text.cex, 
+  sector.groups.text.vjust=sector.groups.text.vjust
+  #title.main=title.main, title.sub=title.sub
+)
+circos.clear()
+```
+
+## Gene age (not used?)
+
+Cell type specific age distribution
+```{r}
+var_genes_fc <- 2
+cts <- colnames(mc_fp)
+ct_genes <- lapply(cts, function(ct){ 
+  deg <- !(mc_fp[,ct] < var_genes_fc)
+  names(mc_fp[,ct][deg])
+})
+names(ct_genes) <- cts
+ct_genes_list <- lapply(cts, function(x) ga[gene%in%ct_genes[[x]]][,group:=x][])
+ct_genes_dt <- rbindlist(ct_genes_list)
+all_genes_dt <- rbindlist(list(ga,ct_genes_dt))
+all_genes_dt[,group:=factor(group,levels=c("genome",unique(ctann$metacell)))]
+```
+
+Plot
+
+```{r}
+pdf(sprintf("gene_ages_%s.pdf",sp),height=8,width=26,useDingbats=TRUE)
+ggplot(all_genes_dt,aes(group,fill=age)) + 
+  geom_bar(position = "fill") + 
+  scale_fill_manual(values = agecol(length(age_groups))) +
+  scale_y_continuous(expand=c(0,0)) +
+  theme(axis.text.x=element_text(angle=90,vjust=0.5,hjust=1))
+dev.off()
+```
+
+## Gene expression (not used?)
+Pairwise similarities
+```{r}
+circos_file=sprintf("circos/%s/circos_%s_ct_kld_0.97_without_names.RDS",sp,sp)
+suff=str_remove_all(basename(circos_file),sprintf("%s_|\\.RDS",sp))
+kld=readRDS(circos_file)
+threshold=NULL
+threshold.quantile=0.97
+top_links <- kld[col!="white"][order(linkvalue,decreasing=TRUE)]
+
+plot_list <- lapply(1:10, function(i) {
+  cts <- unlist(top_links[i,.(ct1,ct2)], use.names=FALSE)
+  genes <- commonGenes(mc_fp,cts,feature_in_thrs=1.8,feature_out_thrs=2,method="absolute",methodbg="absolute")
+  col <- ctcol[cts][1]; names(col) <- paste(cts,collapse="_")
+  csps_plot_groupped_gene_expression(mc_fp=mc_fp, ct=cts, genes=genes$genes_in, ctcol=col) + labs(x=NULL,y=NULL) 
+})
+gp=egg::ggarrange(plots=plot_list, ncol=1, left="gene expression fold change")
+pdf(sprintf("genes/pairwise_ct_expression_%s.pdf",sp),width=5,height=length(plot_list)*2.5,useDingbats=TRUE)
+gp
+dev.off()
+```
+
+# Four-species cell type level comparison
+
+Output dir
+
+```{r}
+outdir <- "cross_species/cell_type"
+dir.create(outdir,showWarnings=FALSE)
+```
+
+Input files
+
+```{r}
+sp1="Spis"
+sp2="Nvec"
+sp3="Xesp"
+sp4="Hvul"
+sp=paste(c(sp1,sp2,sp3,sp4),collapse="_")
+sp1_fp_fn="clustering_coral/scdb/Spis_coral_cell_type_gene_FC"
+sp2_fp_fn="clustering_nematostella/scdb/Nvec_adult_cell_type_gene_FC"
+sp3_fp_fn="clustering_xenia/scdb/Xesp_cell_type_gene_FC"
+sp4_fp_fn="clustering_hydra/scdb/Hvul_cell_type_gene_FC"
+sp1_mcann="clustering_coral/scdb/Spis_coral_metacell_annotation"
+sp2_mcann="clustering_nematostella/scdb/Nvec_adult_metacell_annotation"
+sp3_mcann="clustering_xenia/scdb/Xesp_metacell_annotation"
+sp4_mcann="clustering_hydra/scdb/Hvul_metacell_annotation"
+sp1_ctann="clustering_coral/scdb/Spis_coral_cell_type_annotation"
+sp2_ctann="clustering_nematostella/scdb/Nvec_adult_cell_type_annotation"
+sp3_ctann="clustering_xenia/scdb/Xesp_cell_type_annotation"
+sp4_ctann="clustering_hydra/scdb/Hvul_cell_type_annotation"
+sp1_bctann="clustering_coral/scdb/Spis_coral_broad_cell_type_annotation"
+sp2_bctann="clustering_nematostella/scdb/Nvec_adult_broad_cell_type_annotation"
+sp3_bctann="clustering_xenia/scdb/Xesp_broad_cell_type_annotation"
+sp4_bctann="clustering_hydra/scdb/Hvul_broad_cell_type_annotation"
+OG_pairs1_2_fn="annotation/og_pairs_metazoa/Spis_Nvec_og_pairs.txt"
+OG_pairs1_3_fn="annotation/og_pairs_metazoa/Spis_Xesp_og_pairs.txt"
+OG_pairs1_4_fn="annotation/og_pairs_metazoa/Spis_Hvul_og_pairs.txt"
+OG_pairs2_3_fn="annotation/og_pairs_metazoa/Nvec_Xesp_og_pairs.txt"
+OG_pairs2_4_fn="annotation/og_pairs_metazoa/Nvec_Hvul_og_pairs.txt"
+OG_pairs3_4_fn="annotation/og_pairs_metazoa/Xesp_Hvul_og_pairs.txt"
+```
+
+Cell type annotations.
+
+```{r}
+ctann=rbindlist(list(
+  fread(sp1_ctann)[,metacell:=paste(sp1,metacell,sep="_")],
+  fread(sp2_ctann)[,metacell:=paste(sp2,metacell,sep="_")],
+  fread(sp3_ctann)[,metacell:=paste(sp3,metacell,sep="_")],
+  fread(sp4_ctann)[,metacell:=paste(sp4,metacell,sep="_")]
+))
+ctcol=ctann$color
+ctmc=ctann$metacell
+ctmc <- str_replace(ctmc,"Spis_neuron_12_precursors","Spis_neuron_12_precursor")
+names(ctcol)=ctmc
+ctlabs=str_remove(ctmc,"(Spis_)|(Nvec_)|(Xesp_)|(Hvul_)")
+names(ctlabs)=ctmc
+ctlabs["Nvec_Muscle_gastroderm_tentacle_bud_stage"]="Muscle_gastroderm"
+ctsp=substr(ctmc,1,4)
+names(ctsp)=ctmc
+```
+
+We may need gene expression data for two-way (calculated for circos plots), and also three-way and four way comparisons. The latter two we calculate now.
+
+```{r eval=FALSE}
+# four way
+sp=paste(c(sp1,sp2,sp3,sp4),collapse="_")
+csps=csps_create_4way_crossspecies_object(
+  sp1_fp_fn = sp1_fp_fn, sp2_fp_fn = sp2_fp_fn, sp3_fp_fn = sp3_fp_fn, sp4_fp_fn = sp4_fp_fn, 
+  OG_pairs1_2_fn = OG_pairs1_2_fn, OG_pairs1_3_fn = OG_pairs1_3_fn, OG_pairs1_4_fn = OG_pairs1_4_fn, 
+  OG_pairs2_3_fn = OG_pairs2_3_fn, OG_pairs2_4_fn = OG_pairs2_4_fn, OG_pairs3_4_fn = OG_pairs3_4_fn,
+  sp_names = paste0(c(sp1,sp2,sp3,sp4),"_"), make_sp_colnames = TRUE, quant_norm = TRUE, one2one = TRUE
+)
+write.table(csps$merged, file.path(outdir,sprintf("%s_cell_type_gene_FC",sp)),quote=FALSE,sep="\t")
+# three way spis-nvec-xesp
+sp=paste(c(sp1,sp2,sp3),collapse="_")
+csps=csps_create_3way_crossspecies_object(
+  sp1_fp_fn = sp1_fp_fn, sp2_fp_fn = sp2_fp_fn, sp3_fp_fn = sp3_fp_fn,
+  OG_pairs1_2_fn = OG_pairs1_2_fn, OG_pairs1_3_fn = OG_pairs1_3_fn, OG_pairs2_3_fn = OG_pairs2_3_fn, 
+  sp_names = paste0(c(sp1,sp2,sp3),"_"), make_sp_colnames = TRUE, quant_norm = TRUE, one2one = TRUE
+)
+write.table(csps$merged, file.path(outdir,sprintf("%s_cell_type_gene_FC",sp)),quote=FALSE,sep="\t")
+# three way spis-nvec-hvul
+sp=paste(c(sp1,sp2,sp4),collapse="_")
+csps=csps_create_3way_crossspecies_object(
+  sp1_fp_fn = sp1_fp_fn, sp2_fp_fn = sp2_fp_fn, sp3_fp_fn = sp4_fp_fn,
+  OG_pairs1_2_fn = OG_pairs1_2_fn, OG_pairs1_3_fn = OG_pairs1_4_fn, OG_pairs2_3_fn = OG_pairs2_4_fn, 
+  sp_names = paste0(c(sp1,sp2,sp4),"_"), make_sp_colnames = TRUE, quant_norm = TRUE, one2one = TRUE
+)
+write.table(csps$merged, file.path(outdir,sprintf("%s_cell_type_gene_FC",sp)),quote=FALSE,sep="\t")
+# three way spis-xesp-hvul
+sp=paste(c(sp1,sp3,sp4),collapse="_")
+csps=csps_create_3way_crossspecies_object(
+  sp1_fp_fn = sp1_fp_fn, sp2_fp_fn = sp3_fp_fn, sp3_fp_fn = sp4_fp_fn,
+  OG_pairs1_2_fn = OG_pairs1_3_fn, OG_pairs1_3_fn = OG_pairs1_4_fn, OG_pairs2_3_fn = OG_pairs3_4_fn, 
+  sp_names = paste0(c(sp1,sp3,sp4),"_"), make_sp_colnames = TRUE, quant_norm = TRUE, one2one = TRUE
+)
+write.table(csps$merged, file.path(outdir,sprintf("%s_cell_type_gene_FC",sp)),quote=FALSE,sep="\t")
+```
+
+Read expression data
+
+```{r}
+fread.table <- function(x) {
+  dt <- fread(x)
+  mat <- as.matrix(dt[,-1])
+  rownames(mat) <- dt[[1]]
+  mat
+}
+mc_fp_spis_nvec_xesp_hvul <- fread.table(file.path(outdir,"Spis_Nvec_Xesp_Hvul_cell_type_gene_FC"))
+mc_fp_spis_nvec <- fread.table(file.path(outdir,"Spis_Nvec_cell_type_gene_FC"))
+mc_fp_spis_xesp <- fread.table(file.path(outdir,"Spis_Xesp_cell_type_gene_FC"))
+mc_fp_spis_hvul <- fread.table(file.path(outdir,"Spis_Hvul_cell_type_gene_FC"))
+mc_fp_spis_nvec_xesp <- fread.table(file.path(outdir,"Spis_Nvec_Xesp_cell_type_gene_FC"))
+mc_fp_spis_nvec_hvul <- fread.table(file.path(outdir,"Spis_Nvec_Hvul_cell_type_gene_FC"))
+mc_fp_spis_xesp_hvul <- fread.table(file.path(outdir,"Spis_Xesp_Hvul_cell_type_gene_FC"))
+```
+
+# Neurons and gland cell types
+
+Output dir
+
+```{r}
+plotdir <- file.path(outdir,"vioin")
+dir.create(outdir,showWarnings=FALSE)
+```
+
+Get cell types for which to plot expression - these are top connected cell types in pairwise circos plots.
+
+```{r pairwise_links}
+circos_files <- c(
+  "cross_species/circos/circos_Spis_Nvec_ct_kld_0.98.RDS",
+  "cross_species/circos/circos_Spis_Xesp_ct_kld_0.98.RDS",
+  "cross_species/circos/circos_Spis_Hvul_ct_kld_0.98.RDS"
+)
+kld_list <- lapply(circos_files, function(circos_file) {
+  kld <- readRDS(circos_file)
+  threshold=NULL; threshold.quantile=0.98
+  top_links <- kld[col!="white"][order(linkvalue,decreasing=TRUE)]
+})
+kld1 <- kld_list[[1]]
+kld2 <- kld_list[[2]][,1:2]; setnames(kld2,"ct2","ct3")
+kld3 <- kld_list[[3]][,1:2]; setnames(kld3,"ct2","ct4")
+kld12 <- merge.data.table(kld1,kld2,by="ct1",all.x=TRUE,allow.cartesian=TRUE)
+kld123 <- merge.data.table(kld12,kld3,by="ct1",all.x=TRUE,allow.cartesian=TRUE)
+setcolorder(kld123, c("ct1","ct2","ct3","ct4"))
+```
+
+We are interested in shared neuronal and gland cell types, so we select S. pistillata neuronal and gland cell types that had top links to only one or two cell types in other species. We also select neurons similar to known lwamide neurons in Nematosteella.
+
+```{r}
+# select neurons and gland cell types
+topkld <- kld123[grepl("neuron",ct1) & grepl("neuron",ct2) | grepl("gland",ct1) & grepl("gland",ct2)]
+# select potential pairs 
+topct <- unique(topkld[,.N,ct1][N<4][[1]])
+# inspect pairs, exclude those with >1 pair in single species
+topkld[ct1=="Spis_neuron_11"]
+topct <- topct[-match("Spis_neuron_11",topct)]
+# list cts
+ngl_list <- sapply(topct, function(x) {
+  cts <- unlist( topkld[ct1==x][,.(ct1,ct2,ct3,ct4)], use.names=FALSE)
+  unique(cts[!is.na(cts)])
+}, simplify=FALSE, USE.NAMES=TRUE)
+# lwamide
+lwd <- unique(topkld[ct2=="Nvec_neuron_lwamide"][[1]])
+lwd_list <- sapply(lwd, function(x) {
+  cts <- unlist( topkld[ct1==x & ct2=="Nvec_neuron_lwamide"][,.(ct1,ct2,ct3,ct4)], use.names=FALSE)
+  unique(cts[!is.na(cts)])
+}, simplify=FALSE, USE.NAMES=TRUE)
+cts_list <- c(ngl_list,lwd_list)
+```
+
+Get common genes for groups of cell types
+
+```{r}
+feature_in_thrs=1.2; feature_out_thrs=1.8,
+gene_list <- lapply(names(cts_list), function(i) {
+  
+  ct <- cts_list[[i]]
+  ct <- grep("neuron|gland",ct,value=TRUE)
+  message("cell types: ",paste(ct,colapse=" "))
+  
+  sps <- sapply(c(sp1,sp2,sp3,sp4), function(x) any(grepl(x,cts_list[[i]])))
+  sps <- names(sps[sps==TRUE])
+  message("species: ",paste(sps,colapse=" "))
+  if (all(c("Nvec","Hvul","Xesp") %in% sps)) {
+    mc_fp <- mc_fp_spis_nvec_xesp_hvul
+  } else if (all(c("Nvec","Xesp") %in% sps)) {
+    mc_fp <- mc_fp_spis_nvec_xesp
+  } else if (all(c("Nvec","Hvul") %in% sps)) {
+    mc_fp <- mc_fp_spis_nvec_hvul
+  } else if (all(c("Xesp","Hvul") %in% sps)) {
+    mc_fp <- mc_fp_spi_xesp_hvul
+  } else if ("Nvec" %in% sps) {
+    mc_fp <- mc_fp_spis_nvec
+  } else if ("Xesp" %in% sps) {
+    mc_fp <- mc_fp_spis_xesp
+  } else if ("Hvul" %in% sps) {
+    mc_fp <- mc_fp_spis_hvul
+  }
+  message("ncol mc_fp:", ncol(mc_fp))
+  
+  cgenes <- commonGenes(
+    mc_fp, cols=ct, feature_in_thrs=1.2, feature_out_thrs=1.8,
+    method="absolute", methodbg="absolute", 
+    abs_leakyness = 0.1, abs_leakynessbg = 0.1
+  )
+  message("shared ogs: ",length(cgenes[[1]]))
+  cgenes
+})
+names(gene_list) <- names(cts_list)
+
+gann <- fread("annotation/Spis_annotation_v7_2020-10-26_clean",select=1:3)
+setnames(gann,c("gene","pfam","humanog"))
+tfann <- fread("annotation/curated_TFh_Spis_EDITED_NAMES.csv")
+orthdt <- rbindlist(lapply(names(gene_list),function(i) {
+  x <- gene_list[[i]][1]
+  genes <- x[[1]]
+  genes_ann <- gann[match(genes,gene)]
+  genes_ann[,tf:=FALSE]; genes_ann[gene %in% tfann[[1]], tf:=TRUE]
+  genes_ann[,tf:=factor(tf,levels=c(TRUE,FALSE))]
+  genes_ann[,group:=i]
+  setorder(genes_ann, group, tf)
+  setcolorder(genes_ann,"group")
+  genes_ann[!is.na(gene)]
+}))
+fwrite(
+  orthdt, 
+  file.path(outdir,sprintf("selected.neuro.gland.orthologs.fc%s.fcout%s.violin.tsv",feature_in_thrs,feature_out_thrs)),
+  sep="\t",col.names=TRUE
+)
+```
+
+Plot expression
+
+```{r}
+plot_list <- lapply(names(cts_list), function(i) {
+  
+  ct <- cts_list[[i]]
+  ct <- grep("neuron|gland",ct,value=TRUE)
+  
+  sps <- sapply(c(sp1,sp2,sp3,sp4), function(x) any(grepl(x,cts_list[[i]])))
+  sps <- names(sps[sps==TRUE])
+  message(paste(sps,colapse=" "))
+  if (all(c("Nvec","Hvul","Xesp") %in% sps)) {
+    mc_fp <- mc_fp_spis_nvec_xesp_hvul
+  } else if (all(c("Nvec","Xesp") %in% sps)) {
+    mc_fp <- mc_fp_spis_nvec_xesp
+  } else if (all(c("Nvec","Hvul") %in% sps)) {
+    mc_fp <- mc_fp_spis_nvec_hvul
+  } else if (all(c("Xesp","Hvul") %in% sps)) {
+    mc_fp <- mc_fp_spi_xesp_hvul
+  } else if ("Nvec" %in% sps) {
+    mc_fp <- mc_fp_spis_nvec
+  } else if ("Xesp" %in% sps) {
+    mc_fp <- mc_fp_spis_xesp
+  } else if ("Hvul" %in% sps) {
+    mc_fp <- mc_fp_spis_hvul
+  }
+  message(ncol(mc_fp))
+
+  cgenes <- gene_list[[i]]
+  col <- ctcol[ct]
+  font.size <- 10
+  gp <- csps_plot_groupped_gene_expression(
+    mc_fp=mc_fp, ct=ct, genes=cgenes$genes_in, col=col, min.genes=3, scale.fc.max=5,
+    x.names=TRUE, x.names.angle=30,
+    text.size=font.size, title.size=font.size/1.5, label.size=font.size*1.2,
+    sign=FALSE, #sign.label="fdrcode",
+    title = FALSE, x.names.replacement = c("_cell"="")
+  )
+  if (!is.null(gp)) {
+    gp + labs(x=NULL,y=NULL)
+  } else {
+    NULL
+  }
+})
+plot_list_final <- plot_list[!sapply(plot_list,is.null)]
+#gp=egg::ggarrange(plots=plot_list_final, ncol=1, left="gene expression fold change")
+
+# single plot
+pdf(
+  file.path(plotdir,sprintf("pairwise.ct.expression.fc%s.fcout%s.violin.tsv",feature_in_thrs,feature_out_thrs)),
+  width=5,height=length(plot_list_final)*2,useDingbats=TRUE
+)
+grid.newpage()
+vrows <- length(plot_list_final)
+plotcols <- sapply(plot_list_final, function(x)
+  nrow(as.data.table(x$data)[,.N,.(species,selected_cell_type)]))+1
+vcols <- max(plotcols)
+pushViewport(viewport(layout=grid.layout(vrows, vcols)))
+define_region <- function(row, col) viewport(layout.pos.row=row,layout.pos.col=col)
+plot_genes <- vector("list",length(plot_list_final))
+for (i in 1:length(plot_list_final)) {
+  gp <- plot_list_final[[i]]
+  print(gp, vp=define_region(i, 2:plotcols[i]))
+  plot_genes[[i]] <- unique(gp$data$gene)
+}
+dev.off()
+```
+
+# Alga-hosting cells
+
+Output dir
+
+```{r}
+plotdir <- file.path(outdir,"upset")
+dir.create(plotdir,showWarnings = FALSE)
+```
+
+Read orthologs expression
+
+```{r}
+mc_fp <- read.table("cross_species/cell_type/Spis_Xesp_cell_type_gene_FC")
+colnames(mc_fp) <- str_replace(colnames(mc_fp),"\\.","-")
+hcts <- c(
+  "Spis_alga-hosting_cells","Spis_gastrodermis",
+  "Xesp_alga-hosting_cells","Xesp_gastrodermis"
+)
+hfp <- mc_fp[,hcts]
+```
+
+UpSet of overlapping var genes
+
+```{r}
+fcthrs <- 1.5
+var_genes <- rownames(hfp)[apply(hfp,1,function(x) max(x)>fcthrs)] 
+length(var_genes) # 1929
+lt <- sapply(colnames(hfp), function(x) rownames(hfp)[hfp[,x]>fcthrs], simplify=FALSE, USE.NAMES=TRUE)
+length(unique(unlist(lt))) # 2929
+all.equal(sort(var_genes),sort(unique(unlist(lt,use.names=FALSE)))) # TRUE
+lapply(lt,length)
+ltf <- lapply(lt, function(x) unique(str_remove(x,'\\.\\d+')))
+lapply(ltf,length)
+m <- make_comb_mat(ltf)
+mn <- m[comb_degree(m)>1]
+up <- UpSet(
+  mn, set_order = hcts,
+  pt_size = unit(5, "mm"), lwd = 3,
+  comb_col = c("back","grey60","grey40","grey20")[comb_degree(mn)],
+  right_annotation = upset_right_annotation( 
+    mn, width = unit(4, 'cm'),
+    annotation_name_side = "top",
+    axis_param = list(side = "top")
+  )
+)
+pdf(file.path(plotdir,sprintf("alga.hosting.cells.fc%s.upset.pdf",fcthrs)),width=6,height=2.5)
+up
+dev.off()
+# genes ovl in hos cells
+length(extract_comb(mn,"1010"))
+```
+
+Save genes
+
+```{r}
+gann <- fread("annotation/Spis_annotation_v7_2020-10-26_clean",select=1:3)
+setnames(gann,c("gene","pfam","humanog"))
+tfann <- fread("annotation/curated_TFh_Spis_EDITED_NAMES.csv")
+genes_list_dt <- gann[match(unlist(ltf),gene)]
+genes_list_dt[,tf:=FALSE]; genes_list_dt[gene %in% tfann[[1]], tf:=TRUE]
+genes_list_dt[,I(hcts):=lapply(hcts, function(x) gene %in% ltf[[x]]),by=1:nrow(genes_list_dt)]
+fwrite(
+  genes_list_dt, 
+  file.path(plotdir,sprintf("alga.hosting.cells.fc%s.upset.tsv",fcthrs)),
+  sep="\t"
+)
+host_genes <- unique(genes_list_dt[gene %in% extract_comb(mn,"1010")][,1:3])
+fwrite(
+  host_genes, 
+  file.path(plotdir,sprintf("alga.hosting.cells.fc%s.host.genes.tsv",fcthrs)),
+  sep="\t"
+)
+```
+
+# Four-species broad cell type level comparison
+## Data
+
+Input files
+
+```{r}
+outdir="cross_species/tree"; dir.create(outdir,showWarnings = FALSE)
+sp1="Spis"
+sp2="Nvec"
+sp3="Xesp"
+sp4="Hvul"
+sp=paste(c(sp1,sp2,sp3,sp4),collapse="_")
+sp1_fp_fn="clustering_coral/scdb/Spis_coral_broad_cell_type_gene_FC"
+sp2_fp_fn="clustering_nematostella/scdb/Nvec_adult_broad_cell_type_gene_FC"
+sp3_fp_fn="clustering_xenia/scdb/Xesp_broad_cell_type_gene_FC"
+sp4_fp_fn="clustering_hydra/scdb/Hvul_broad_cell_type_gene_FC"
+sp1_mcann="clustering_coral/scdb/Spis_coral_metacell_annotation"
+sp2_mcann="clustering_nematostella/scdb/Nvec_adult_metacell_annotation"
+sp3_mcann="clustering_xenia/scdb/Xesp_metacell_annotation"
+sp4_mcann="clustering_hydra/scdb/Hvul_metacell_annotation"
+sp1_ctann="clustering_coral/scdb/Spis_coral_cell_type_annotation"
+sp2_ctann="clustering_nematostella/scdb/Nvec_adult_cell_type_annotation"
+sp3_ctann="clustering_xenia/scdb/Xesp_cell_type_annotation"
+sp4_ctann="clustering_hydra/scdb/Hvul_cell_type_annotation"
+sp1_bctann="clustering_coral/scdb/Spis_coral_broad_cell_type_annotation"
+sp2_bctann="clustering_nematostella/scdb/Nvec_adult_broad_cell_type_annotation"
+sp3_bctann="clustering_xenia/scdb/Xesp_broad_cell_type_annotation"
+sp4_bctann="clustering_hydra/scdb/Hvul_broad_cell_type_annotation"
+og_pairs_dir <- "annotation/og_pairs_metazoa"
+OG_pairs1_2_fn=sprintf("%s/Spis_Nvec_og_pairs.txt",og_pairs_dir)
+OG_pairs1_3_fn=sprintf("%s/Spis_Xesp_og_pairs.txt",og_pairs_dir)
+OG_pairs1_4_fn=sprintf("%s/Spis_Hvul_og_pairs.txt",og_pairs_dir)
+OG_pairs2_3_fn=sprintf("%s/Nvec_Xesp_og_pairs.txt",og_pairs_dir)
+OG_pairs2_4_fn=sprintf("%s/Nvec_Hvul_og_pairs.txt",og_pairs_dir)
+OG_pairs3_4_fn=sprintf("%s/Xesp_Hvul_og_pairs.txt",og_pairs_dir)
+```
+
+Expression data
+
+```{r eval=FALSE}
+csps <- csps_create_4way_crossspecies_object(
+  sp1_fp_fn = sp1_fp_fn, sp2_fp_fn = sp2_fp_fn, sp3_fp_fn = sp3_fp_fn, sp4_fp_fn = sp4_fp_fn,
+  OG_pairs1_2_fn = OG_pairs1_2_fn, OG_pairs1_3_fn = OG_pairs1_3_fn, OG_pairs1_4_fn = OG_pairs1_4_fn,
+  OG_pairs2_3_fn = OG_pairs2_3_fn, OG_pairs2_4_fn = OG_pairs2_4_fn, OG_pairs3_4_fn = OG_pairs3_4_fn,
+  sp_names = paste0(c(sp1,sp2,sp3,sp4),"_"), make_sp_colnames = TRUE, quant_norm = TRUE, 
+  one2one = TRUE, restrict_paralogs = FALSE
+)
+mc_fp <- csps$merged
+write.table(mc_fp,file.path(outdir,sprintf("%s_broad_cell_type_gene_FC",sp)),sep="\t",quote=FALSE,row.names=TRUE)
+```
+
+Cell type annotations
+
+```{r}
+ctann=rbindlist(list(
+  fread(sp1_ctann)[,metacell:=paste(sp1,metacell,sep="_")],
+  fread(sp2_ctann)[,metacell:=paste(sp2,metacell,sep="_")],
+  fread(sp3_ctann)[,metacell:=paste(sp3,metacell,sep="_")],
+  fread(sp4_ctann)[,metacell:=paste(sp4,metacell,sep="_")]
+))
+```
+
+Broad cell type annotations
+
+```{r}
+mcann=rbindlist(list(
+  fread(sp1_mcann)[,metacell:=paste(sp1,metacell,sep="_")],
+  fread(sp2_mcann)[,metacell:=paste(sp2,metacell,sep="_")],
+  fread(sp3_mcann)[,metacell:=paste(sp3,metacell,sep="_")],
+  fread(sp4_mcann)[,metacell:=paste(sp4,metacell,sep="_")]
+))[,color:=NULL]
+bctann=rbindlist(list(
+  fread(sp1_bctann)[,cell_type:=paste(sp1,cell_type,sep="_")], 
+  fread(sp2_bctann)[,cell_type:=paste(sp2,cell_type,sep="_")], 
+  fread(sp3_bctann)[,cell_type:=paste(sp3,cell_type,sep="_")],
+  fread(sp4_bctann)[,cell_type:=paste(sp4,cell_type,sep="_")]
+))
+setnames(bctann,c("cell_type","broad_cell_type","color"))
+ctcol=bctann$color
+ctmc=bctann$broad_cell_type
+names(ctcol)=ctmc
+ctlabs=str_remove(ctmc,"(Spis_)|(Nvec_)|(Xesp_)|(Hvul_)")
+names(ctlabs)=ctmc
+ctsp=substr(ctmc,1,4)
+names(ctsp)=ctmc
+spfullnames=c("Spis"="Stylophora pistillata","Xesp"="Xenia sp.","Nvec"="Nematostella vectensis", "Hvul"="Hydra vulgaris")
+fwrite(bctann,file.path(outdir,sprintf("%s_broad_cell_type_annotation",sp)),sep="\t")
+bann <- mcann[bctann,on=c("cell_type"),allow.cartesian=TRUE]
+bann[,species:=substr(metacell,1,4)]
+```
+
+## Trees
+
+Define variable genes.
+
+```{r var_genes, eval=TRUE}
+mc_fp <- read.table(file.path(outdir,sprintf("%s_broad_cell_type_gene_FC",sp)),sep="\t")
+colnames(mc_fp) <- str_replace(colnames(mc_fp),"\\.","-")
+var_genes_fc <- 1.8
+var_genes <- names(which(apply(mc_fp,1,function(x) max(x)>var_genes_fc))) # 1227
+
+# old_csps_mcfp <- read.table("../../cross_sp/gene_expression/Spis_Nvec_Xesp_Hvul_broad_cell_type_gene_FC")
+# old_var_genes <- names(which(apply(old_csps_mcfp,1,function(x) max(x)>var_genes_fc))) # 1192
+# 
+# library(eulerr)
+# plot(euler(list(old=old_var_genes,new=var_genes)), quantities=TRUE)
+```
+
+Build co-occurence tree
+
+```{r}
+# Co-occurence tree
+set.seed(4343)
+h <- c(0.75,0.95)
+p <- 0.75
+clustering_algorithm <- "hclust"
+clustering_method <- "average"
+cor_method <- "pearson"
+treename <- sprintf(
+  "species_vargenes%s_cooc%sp%s%sh%s",
+  var_genes_fc,clustering_method,p,clustering_algorithm,paste(h,collapse=",")
+)
+tree_vargenes_cooc <- treeFromEnsembleClustering(
+  x=mc_fp, vargenes=var_genes, p=p, h=h,  bootstrap=FALSE,
+  clustering_algorithm=clustering_algorithm, clustering_method=clustering_method, 
+  cor_method=cor_method
+)
+tree_rds <- file.path(outdir,sprintf("%s.RDS",treename))
+tree <- tree_vargenes_cooc$tree
+saveRDS(tree,tree_rds)
+saveTreeFiles(
+  tree_rds, ctcol=ctcol, out_dir = outdir, save_nexus = TRUE, scale_branches = FALSE
+  #width_tree = 10, height_tree = 12, width_polytree = 10, height_polytree = 12
+)
+
+# Co-occurrence matrix
+col=colorRamp2(
+  c(0,100,200,400,600,700,800,900,1000),
+  colors=c(c("white",'#ffffe5','#fff7bc','#fee391','#fec44f','#fe9929','#ec7014','#cc4c02','#990000'))
+)
+plotTreeMatrix(
+  mat = tree_vargenes_cooc$cooccurrence, tree = tree, ctcol=ctcol, hmapcol = col, 
+  name="co-occurence", out_name = file.path(outdir,sprintf("matrix_%s.pdf",treename)),
+  width=10, height=10
+)
+
+```
+
+We save nexus file with colors and RDS file.
+
+```{r eval=FALSE, fig.height=18}
+tree_file=file.path(outdir,"species_vargenes1.8_coocaveragep0.75hclusth0.75,0.95_politomies0.10.beast")
+tree <- as.phylo(read.beast(tree_file)); plot(tree,tip.color=ctcol[tree$tip.label])
+treeColorTips(
+  tree_file=tree_file, ctcol=ctcol,
+  out_file=file.path(outdir,"broad_cell_type_species_vargenes1.8_coocaveragep0.75hclusth0.75,0.95_politomies0.10.beast")
+)
+saveRDS(tree,str_replace(tree_file,"beast","RDS"))
+```
+
+## Gap genes
+
+Accessing internal tree nodes to find feature (gap) genes. This is `scripts/gapgenes.R` script, submitted to HPC using `gapgenes.species.sh` submission script.
+
+The reults can be interactively explored in the [shiny app](https://sebe-lab.shinyapps.io/Stylophora_cross_species_cell_type_tree).
+
+
+## Gene expression
+```{r}
+mc_fp=read.table(sprintf("gene_expression/%s_broad_cell_type_gene_FC",sp),sep="\t",stringsAsFactors=FALSE)
+colnames(mc_fp)[colnames(mc_fp)=="Xesp_Dig_filaments"]="Xesp_Digestive_filaments"
+cts=colnames(mc_fp)
+bctanncol=unique(data.table(
+  ct=c(str_remove(names(ctcol),"(Spis|Nvec|Xesp|Hvul)_"),"other"),
+  col=c(ctcol,"grey50")
+))
+bctcol=bctanncol$col
+names(bctcol)=bctanncol$ct
+
+# tree_file="data/Spis_Nvec_Xesp_Hvul_bct_tree_vargenes2_coocp0.5njh0.85_politomies_ordered.beast"
+# tree=as.phylo(read.beast(tree_file))
+# tree_data=setDT(tidytree::as_tibble(tree))
+
+lkyin=0; lkyout=0.05; fcin=1.2; fcout=2
+gap_genes_file=sprintf("data/abs%s_abs%s/gap_genes_infc_%s_outfc_%s.RDS",lkyin,lkyout,fcin,fcout)
+gg=readRDS(gap_genes_file)
+
+ct_nodes=list(
+  "Epidermis"=c(6,8,48), #45
+  "Digestive_filaments"=43,
+  "Gastrodermis"=58,
+  "Cnidocyte"=55,
+  "Neuron"=68,
+  "Gland"=c(67,30,29),
+  "Precursors"=c(53,15,28)
+)
+
+plot_list <- lapply(1:length(ct_nodes), function(i) {
+  ct=names(ct_nodes)[i]
+  snode=ct_nodes[[i]]
+  genes=unlist(gg$top_features[snode])
+  genes=names(table(genes)[table(genes)==length(snode)])
+  csps_plot_groupped_gene_expression(mc_fp=mc_fp, ct=ct, genes=genes, ctcol=bctcol) + labs(x=NULL,y=NULL) 
+})
+gp=egg::ggarrange(plots=plot_list, ncol=1, left="gene expression fold change")
+pdf(sprintf("data/bct_gene_expression.pdf"),width=6,height=14,useDingbats=TRUE)
+gp
+dev.off()
+
+```
+## Seleted cell types comparison
+Compare host cells and gastrodermis
+```{r}
+ct <- "host_cells"
+tfdt <- rbindlist(list(
+  "Spis"=fread("gene_annotations/2020-08-06_curated_annotations/curated_TF_GOOD_iterative_rooting_2020-09-25/curated_TF_Spis.csv",header=FALSE),
+  "Xesp"=fread("gene_annotations/2020-08-06_curated_annotations/curated_TF_GOOD_iterative_rooting_2020-09-25/curated_TF_Xesp.csv",header=FALSE)
+))
+setnames(tfdt,"V1","gene")
+#ct1 <- "Spis_host_cells"
+#ct2 <- "Xesp_host_cells"
+mc_fp_1 <- read.table(sp1_fp_fn)
+mc_fp_2 <- read.table(sp3_fp_fn)
+fcthrs_in <- 1.2; fcthrs_out <- 1.2
+gl1 <- rownames(mc_fp_1)[mc_fp_1[,ct] > fcthrs_in & mc_fp_1[,'gastrodermis'] < fcthrs_out] # & apply(mc_fp_1[,-match(ct,colnames(mc_fp_1)),1,max) < fcthrs_out
+gl2 <- rownames(mc_fp_2)[mc_fp_2[,ct] > fcthrs_in & mc_fp_2[,'gastrodermis'] < fcthrs_out] # & apply(mc_fp_2[,-match(ct,colnames(mc_fp_2)),1,max) < fcthrs_out
+gl1 <- grep("orphan_peak",gl1,value=TRUE,invert=TRUE)
+gl2 <- grep("orphan_peak",gl2,value=TRUE,invert=TRUE)
+og_pairs <- fread(OG_pairs1_3_fn,header=FALSE)
+dt1 <- merge.data.table(data.table("V1"=gl1),og_pairs,by="V1",all.x=TRUE)
+dt2 <- merge.data.table(data.table("V2"=gl2),og_pairs,by="V2",all.x=TRUE)
+setnames(dt1,c("gene","og")); setnames(dt2,c("gene","og"))
+ovl_dt <- rbindlist(list("Spis"=dt1, "Xesp"=dt2),idcol="species")
+mat1=rbind(
+  "shared"=length(intersect(unique(dt1$gene),unique(dt2$og))),
+  "w_og"=sum(setdiff(unique(dt1$gene),dt2$og) %in% og_pairs[[1]]),
+  "wo_og"=sum(!setdiff(unique(dt1$gene),dt2$og) %in% og_pairs[[1]])
+)
+mat2=rbind(
+  "shared"=length(intersect(unique(dt2$gene),unique(dt1$og))),
+  "w_og"=sum(setdiff(unique(dt2$gene),dt1$og) %in% og_pairs[[2]]),
+  "wo_og"=sum(!setdiff(unique(dt2$gene),dt1$og) %in% og_pairs[[2]])
+)
+ovl_dt_sum<-rbindlist(list(
+  "Spis"=as.data.table(mat1,keep.rownames="group"),"Xesp"=as.data.table(mat2,keep.rownames="group")
+), idcol="species")
+setnames(ovl_dt_sum,"V1","numgenes")
+pdf(
+  sprintf("genes/go/gohost/spis_xesp_host_cells_genes_fcin%s_fcoutgastro%s.pdf",fcthrs_in,fcthrs_out),
+  width=3, height=5, useDingbats=TRUE
+)
+ggplot(ovl_dt_sum,aes(group,numgenes,label=numgenes)) + geom_bar(sta="identity") + facet_grid(.~species) + geom_text_repel(nudge_y=10)
+dev.off()
+ann <- fread("gene_annotations/Spis_annotation_v6_2020-09-28",header=FALSE,select=1:3)
+setnames(ann,c("gene","pfam","bbh"))
+spis_genes <- merge.data.table(ovl_dt[species=="Spis"], ann, by="gene", all.x=TRUE, all.y=FALSE)
+setnames(ann,"gene","og")
+xesp_genes <- merge.data.table(ovl_dt[species=="Xesp"], ann, by="og", all.x=TRUE, all.y=FALSE)
+genes_list_dt <- rbindlist(list(spis_genes,xesp_genes),use.names=TRUE)
+genes_list_dt[,shared:=FALSE]
+spis_int <- intersect(unique(dt1$gene),unique(dt2$og))
+xesp_int <- intersect(unique(dt2$gene),unique(dt1$og))
+genes_list_dt[gene%in%xesp_int & og %in% spis_int, shared:=TRUE]
+genes_list_dt[gene%in%spis_int & og%in%xesp_int, shared:=TRUE]
+genes_list_dt[,tf:=FALSE]; genes_list_dt[gene %in% tfdt$gene, tf:=TRUE]
+setcolorder(genes_list_dt,c("species","gene","og","shared","tf"))
+#fwrite(genes_list_dt, sprintf("genes/go/gohost/spis_xesp_host_cells_genes_fcin%s_fcoutgastro%s.tsv",fcthrs_in,fcthrs_out), sep="\t")
+```
+Inspect genes
+```{r}
+genes_list_dt <- fread("genes/go/gohost/spis_xesp_host_cells_genes_fcin1.2_fcoutgastro1.2.tsv")
+# shared
+View(unique(genes_list_dt[shared==T][species=="Spis"][,.(gene,og,pfam,bbh,tf)]))
+# spis
+View(unique(genes_list_dt[shared==F][species=="Spis"][,.(gene,og,pfam,bbh,tf)]))
+# xesp
+View(unique(genes_list_dt[shared==F][species=="Xesp"][,.(gene,og,pfam,bbh,tf)]))
+
+# for go
+gene_list <- list(
+  "Spis_host_cells"=gl1,
+  "Spis_host_cells_og"=unique(dt1[!is.na(og)]$gene),
+  "Xesp_host_cells"=unique(dt2[!is.na(og)]$og)
+)
+```
+Cluster host cells and gastrodermis (tree)
+```{r}
+sp1="Spis"
+sp2="Nvec"
+sp3="Xesp"
+sp4="Hvul"
+sp=paste(c(sp1,sp2,sp3,sp4),collapse="_")
+
+mc_fp <- read.table("gene_expression/Spis_Nvec_Xesp_Hvul_broad_cell_type_gene_FC")
+mc_fp <- mc_fp[,grep("gastrodermis|host",colnames(mc_fp))]
+mc_fp <- mc_fp[,grep("mitotic",colnames(mc_fp),invert=TRUE)]
+
+var_genes_fc <- 2
+var_genes <-names(which(!apply(mc_fp,1,function(x) sort(x,decreasing=T)[1])<var_genes_fc))
+
+set.seed(4343)
+p=0.5; h=0.95; bootstrap=TRUE
+if (bootstrap==TRUE) p="boot"
+clustering_algorithm="nj"
+clustering_method="average"
+cor_method="pearson"
+treebasename=sprintf("gastro_vargenes%s_cooc%sp%s%sh%s",var_genes_fc,clustering_method,p,clustering_algorithm,h)
+tree_vargenes_cooc=treeFromEnsembleClustering(
+  x=mc_fp, vargenes=var_genes, p=p, h=h,  bootstrap=bootstrap,
+  clustering_algorithm=clustering_algorithm, clustering_method=clustering_method, cor_method=cor_method
+)
+saveRDS(tree_vargenes_cooc$tree,sprintf("trees/%s/%s_bct_tree_%s.RDS",sp,sp,treebasename))
+
+
+tree_rds <- "trees/Spis_Nvec_Xesp_Hvul/Spis_Nvec_Xesp_Hvul_bct_tree_gastro_vargenes2_coocaveragepbootnjh0.95.RDS"
+method <- str_extract(tree_rds,"nj|hclust(?=\\.RDS)"); if(is.na(method)) method="hclust"
+tree <- readRDS(tree_rds)
+support_trees <- list()
+for(i in 1:1000){ support_trees[[i]]=treeDownsampling(mc_fp,vargenes=var_genes,p=0.75,method=method) }
+support=prop.clades(tree, support_trees)
+tip_color=ctcol[tree$tip.label]
+treename <- stringr::str_remove(basename(tree_rds),"\\.RDS")
+pdf(sprintf("trees/%s/%s.pdf",sp,treename),height=8,width=6,useDingbats=TRUE)
+plot(tree,tip.color=tip_color)
+drawSupportOnEdges(support,col="black",bg="white",frame="circle")
+dev.off()
+col_tib <- tibble(color=gplots::col2hex(tip_color),label=names(tip_color))
+tree_tib <- as_tibble(tree)
+tree_tib$support <- c(rep(NA, length(tree$tip.label)), support)
+tree_full_tib <- full_join(tree_tib,col_tib, by="label")
+col_labs <- unlist(lapply(1:nrow(tree_full_tib), function(i) {
+  lb=tree_full_tib$label[i]
+  cl=tree_full_tib$color[i]
+  if (!is.na(cl)) {
+    sprintf("%s[&!color=%s]",lb,cl)
+  } else {
+    lb
+  }
+}))
+tree_full_tib$label <- col_labs
+tree_full_dat <- as.treedata(tree_full_tib)
+write.beast(tree_full_dat, file=file.path(sprintf("trees/%s/%s.beast",sp,treename)))
+# tree with politomies (support)
+polytree <- di2multi_support(tree, support, 100)
+tree_tib <- as_tibble(polytree)o
+missing_terminal_nodes <- tree_tib$branch.length<0.01 & !is.na(tree_tib$label)
+tree_tib$branch.length[missing_terminal_nodes] <- tree_tib$branch.length[missing_terminal_nodes]+1
+polytree <- as.phylo(tree_tib)
+pdf(sprintf("trees/%s/%s_polytomies_support.pdf",sp,treename),height=6,width=4,useDingbats=TRUE)
+par(mar=rep(2, 4))
+plot(polytree, main="Polytomies: support < 10%", tip.color=tip_color)
+dev.off()
+col_tib <- tibble(color=gplots::col2hex(tip_color),label=names(tip_color))
+tree_col_tib <- full_join(polytree,col_tib,by="label")
+tree_tib <- as_tibble(polytree)
+tree_tib_support <- c(rep(NA, length(polytree$tip.label)), support)
+if (length(tree_tib_support)-nrow(tree_tib)==1) {
+  tree_tib_support <- tree_tib_support[2:length(tree_tib_support)]
+}
+tree_tib$support <- tree_tib_support
+tree_full_tib <- full_join(tree_tib,col_tib, by="label")
+col_labs <- unlist(lapply(1:nrow(tree_full_tib), function(i) {
+  lb=tree_full_tib$label[i]
+  cl=tree_full_tib$color[i]
+  if (!is.na(cl)) {
+    sprintf("%s[&!color=%s]",lb,cl)
+  } else {
+    lb
+  }
+}))
+tree_full_tib$label <- col_labs
+tree_full_dat <- as.treedata(tree_full_tib)
+write.beast(tree_full_dat, file=file.path(sprintf("trees/%s/%s_politomies.beast",sp,treename)))
+```
+
+# Gene age
+Genome wide gene age distribution
+```{r}
+ga <- fread("gene_annotations/Spis_gene_ages",header=FALSE)
+setnames(ga,c("gene","age"))
+age_groups <- c("Eukaryota","Opisthokonta","Holozoa","Metazoa","Planulozoa","Cnido+Placozoa","Cnidaria","Anthozoa","Hexacorallaria","Scleractinia","Stylophora_specific")
+ga[,age:=factor(age,levels=age_groups)]
+ga[,group:="genome"]
+wap <- wes_palette("Darjeeling2",type="discrete")
+agecol <- colorRampPalette(wap)
+```
+Add age for Spis expressed genes and variable genes (cell type level)
+```{r}
+# all expressed genes
+mc_fp_spis <- read.table("clustering_coral/scdb/Spis_coral_cell_type_gene_FC",sep="\t",stringsAsFactors=FALSE)
+genes_dt <- ga[gene %in% rownames(mc_fp_spis)][,group:="expressed"]
+# variable genes
+max_gene_fc <- apply(mc_fp_spis, 1, max)>1.7
+var_genes <- names(max_gene_fc[max_gene_fc==TRUE])
+var_genes_dt <- ga[gene %in% var_genes][,group:="variable"]
+genes_dt <- rbindlist(list(genes_dt,var_genes_dt))
+```
+Cell type specific genes
+```{r}
+#
+# this approach is equivalent to identifying conserved genes 
+# in orthologous cell types in different species
+#
+# spis bcts
+sp_ann <- fread("clustering_coral/scdb/Spis_coral_broad_cell_type_annotation")
+broad_cell_types <- unique(sp_ann$cell_type)
+# conservation in spis cts
+con_spis_dt <- ctConservedGenes(
+  mc_fp_1=mc_fp_spis, mc_fp_2=mc_fp_spis, cts=broad_cell_types,fc_thrs=2
+)
+# only conserved in single cell type
+con_spis_sel_dt <- con_spis_dt[gene %in% con_spis_dt[,.N,gene][N==1]$gene]
+# filtered conserved genes per cell type list
+ct_genes <- sapply(unique(con_spis_sel_dt$ct), function(x) {
+  all_genes <- con_spis_sel_dt[ct==x]$gene
+  grep("orphan_peak",all_genes,invert=TRUE,value=TRUE)
+}, USE.NAMES=TRUE, simplify=FALSE)
+# add to data
+ct_genes_dt <- rbindlist(lapply(names(ct_genes), function(x) {
+  ga[gene %in% ct_genes[[x]]][,group:=x]
+}))
+genes_dt <- rbindlist(list(genes_dt,ct_genes_dt))
+# for (ct in unique(genes_dt$group))
+#   fwrite(genes_dt[group==ct],sprintf("genes/ct_genes_Spis_%s.tsv",ct),sep="\t")
+```
+### Gene age enrichment
+Cell type specific orthologs age distribution conservation
+```{r eval=FALSE}
+genes_dt_og <- copy(genes_dt)
+genes_dt_og[,species:="Spis"]
+# ct genes
+fread.table <- function(x) {
+  dt <- fread(x)
+  mat <- as.matrix(dt[,-1])
+  rownames(mat) <- dt[[1]]
+  mat
+}
+mc_fp_all <- fread.table("gene_expression/Spis_Nvec_Xesp_Hvul_cell_type_gene_FC")
+mc_fp_spis_nvec <- fread.table("gene_expression/Spis_Nvec_cell_type_gene_FC")
+mc_fp_spis_xesp <- fread.table("gene_expression/Spis_Xesp_cell_type_gene_FC")
+mc_fp_spis_hvul <- fread.table("gene_expression/Spis_Hvul_cell_type_gene_FC")
+bctann <- fread("gene_expression/Spis_Nvec_Xesp_Hvul_broad_cell_type_annotation",sep="\t")
+all_broad_cell_types <- unique(bctann$broad_cell_type)
+
+# add genes
+og_genes_dt <- rbindlist(sapply(c("Nvec","Xesp","Hvul"), function(sp) {
+  
+  mc_fp <- switch(sp,
+    "Spis" = mc_fp_spis,
+    "Nvec" = mc_fp_spis_nvec,
+    "Xesp" = mc_fp_spis_xesp,
+    "Hvul" = mc_fp_spis_hvul,
+    stop(sprintf("Not recognized species %sp!",sp))
+  )
+  cid1 <- grep("Spis",colnames(mc_fp))
+  cid2 <- grep(sp,colnames(mc_fp))
+  colnames(mc_fp) <- str_remove(colnames(mc_fp),"(Spis|Nvec|Xesp|Hvul)_")
+  cts <- str_remove(grep(sp,all_broad_cell_types,value=TRUE),"(Spis|Nvec|Xesp|Hvul)_")
+  genes_dt <- ctConservedGenes(
+    mc_fp_1=mc_fp[,cid1], mc_fp_2=mc_fp[,cid2], cts=cts, fc_thrs=2
+  )
+  
+  # only conserved in single cell type
+  genes_dt <- genes_dt[gene %in% genes_dt[,.N,gene][N==1]$gene]
+  
+  # filtered conserved genes per cell type list
+  og_genes <- sapply(unique(genes_dt$ct), function(x) {
+    all_genes <- genes_dt[ct==x]$gene
+    grep("orphan_peak",all_genes,invert=TRUE,value=TRUE)
+  }, USE.NAMES=TRUE, simplify=FALSE)
+  og_gene_dt <- rbindlist(sapply(names(og_genes), function(x) {
+    gs <- og_genes[[x]]
+    copy(ga[gene %in% gs])[,group:=x]
+  }, simplify=FALSE, USE.NAMES=TRUE)) #idcol="group", use.names=TRUE
+  og_gene_dt[,species:=sp]
+}, simplify=FALSE, USE.NAMES=TRUE)) #idcol="species", use.names=TRUE
+
+# combine spis data with og cell type specific genes data
+all_genes_dt <- rbindlist(list(genes_dt_og,og_genes_dt),use.names=TRUE)
+all_genes_dt[,group:=factor(
+  group, levels=c(
+    "expressed", "variable", 
+    unique(str_remove(bctann$broad_cell_type,"(Spis|Nvec|Xesp|Hvul)_")))
+)]
+all_genes_dt[,age:=factor(age,levels=age_groups)]
+
+# og divergence in spis
+conservation <- "OR"
+#cts_spis_og <- c("Cnidocyte","Gastrodermis","Digestive_filaments","Epidermis","Neuron","Gland")
+cts_spis_og <- levels(all_genes_dt$group)[-c(1:2)]
+for (ct in cts_spis_og) {
+  #spis_ct <- paste0("Spis_",ct)
+  if (conservation=="AND") {
+    other_sp_dt1 <- all_genes_dt[species=="Nvec" & group==ct]
+    other_sp_dt2 <- all_genes_dt[species=="Xesp" & group==ct]
+    other_sp_dt3 <- all_genes_dt[species=="Hvul" & group==ct]
+    cid <- (all_genes_dt$species=="Spis" & 
+              all_genes_dt$group==ct & 
+              all_genes_dt$gene %in% other_sp_dt1$gene & 
+              all_genes_dt$gene %in% other_sp_dt3$gene & 
+              all_genes_dt$gene %in% other_sp_dt3$gene)
+    all_genes_dt[cid,ac:="conserved"]
+  } else if (conservation=="OR") {
+    other_sp_dt <- all_genes_dt[species %in% c("Nvec","Xesp","Hvul") & group==ct]
+    cgenes <- all_genes_dt[group==ct & species=="Spis" & all_genes_dt$gene %in% other_sp_dt$gene]$gene
+    all_genes_dt[group==ct, ac:="divergent"]
+    all_genes_dt[group==ct & gene %in% cgenes, ac:="conserved"]
+  }
+  message(nrow(all_genes_dt[ac=="conserved" & group==ct]), " conserved orthologs for ", ct)
+  message(nrow(all_genes_dt[ac=="divergent" & group==ct]), " divergent orthologs for ", ct)
+  all_genes_dt[,ac:=factor(ac,levels=c("conserved","divergent"))]
+}
+```
+Save genes
+```{r eval=FALSE}
+gann <- fread("gene_annotations/Spis_annotation_v6_2020-09-28",header=FALSE)[,c(1:3)]
+setnames(gann,colnames(gann),c("gene","pfam","bbh"))
+gdt <- merge.data.table(
+  all_genes_dt[order(gene,species,ac)], #[!(group%in%c("expressed","variable"))]
+  gann,by="gene",all.x=TRUE,all.y=FALSE
+)
+fwrite(gdt, sprintf("genes/all_genes_conservation_OR_fc2.tsv"),sep="\t")
+```
+Barplot per cell type
+```{r}
+gdt <- fread("genes/all_genes_conservation_OR_fc2.tsv")
+gdt[species=="Spis"][,.N,.(group,ac)][order(group)]
+ctgroups <- unique(gdt$group)[-match(c("expressed","variable"),unique(gdt$group))]
+div_cts <- c("immune","unknown","mitotic_host_cells","calicoblast")
+iter <- length(ctgroups)
+gene_sum_list <- lapply(1:iter, function(i){
+  # select cell type
+  x <- ctgroups[i]
+  plot_dt_g <- gdt[group==x]
+  plot_dt_g <- plot_dt_g[!is.na(ac)]
+  # summarize conserved vs divergent per age
+  plot_dt <- plot_dt_g[,.(numgenes=.N),.(age,ac,species)]
+  if (!(x %in% div_cts))
+    plot_dt <- plot_dt[!(age %in% c("Scleractinia","Stylophora_specific"))]
+  plot_dt[,totgenes:=sum(numgenes),.(species,ac)]
+  plot_dt[,freqgenes:=numgenes/totgenes]
+  plot_dt[,fstr:=sprintf("%.1f%%",freqgenes*100)]
+  plot_dt[!(freqgenes>0.01),fstr:=""]
+  # save
+  plot_dt
+})
+plot_list <- lapply(1:iter, function(i) {
+  plot_dt <- gene_sum_list[[i]][species=="Spis"]
+  plot_dt[,age:=factor(age,levels=age_groups)]
+  # colors for conserved vs divergent
+  scale_cols <- gray.colors(4)[1:2] #agecol(8)[1:2]
+  names(scale_cols) <- c("divergent","conserved")
+  # plot
+  ggplot(plot_dt,aes(x=age,y=numgenes,fill=ac,color=ac)) + 
+    geom_bar(stat="identity",position=position_dodge2(width=0.99,preserve="single")) + 
+    geom_text(
+      aes(label=fstr), vjust=1.5, color="white", position=position_dodge(width=0.8), size=2.5)+
+    scale_fill_manual(values=scale_cols,drop=FALSE) + scale_color_manual(values=scale_cols,drop=FALSE) +
+    scale_y_continuous(expand=c(0,0)) +
+    theme(
+      axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+      axis.line.x=element_blank(), 
+      panel.border = element_blank(),
+      legend.title = element_blank()
+    ) + 
+    labs(title=ctgroups[i], x=NULL, y="number of genes")
+})
+names(plot_list) <- ctgroups
+names(gene_sum_list) <- ctgroups
+```
+Save plots
+```{r}
+plot_list_plot <- plot_list[c("cnidocyte","gastrodermis","germline","digestive_filaments","epidermis","neuron","gland","host_cells")]
+pdf(
+  sprintf("genes/geneage/gene_ages_Spis_numgenes.pdf"),
+  width=12, height=length(plot_list_plot)*5, useDingbats=TRUE
+)
+plotcols = sapply(plot_list_plot,function(gp) length(levels(gp$data$age)))+1
+vcols = max(plotcols)+1
+grid.newpage()
+vrows <- length(plot_list_plot)
+pushViewport(viewport(layout=grid.layout(vrows, vcols)))
+define_region <- function(row, col) viewport(layout.pos.row=row,layout.pos.col=col)
+glegend <- cowplot::get_legend(plot_list_plot[[1]])
+for (i in 1:length(plot_list_plot)) {
+  gp <- plot_list_plot[[i]]
+  print(gp, vp=define_region(i, 1:pmax(plotcols[i],2)))
+}
+dev.off()
+```
+#### Enrichment (shared cell types)
+```{r}
+#
+# BACKGROUND
+#
+# div for all genes
+gs <- unique(all_genes_dt[!is.na(ac)][,.(gene,ac)][order(gene)])
+dgs <- gs[,.N,gene][N>1]$gene
+gs[gene %in% dgs, ac:="divergent"]
+gsdt <- unique(gs)
+# variable genes bg
+vardt <- copy(all_genes_dt[group=="variable"][,ac:=NULL])
+bgdt <- merge.data.table(vardt,gsdt,by="gene",all.x=TRUE,all.y=FALSE)
+# exclude genes without orthologs (cant deermine divergence/conservation)
+bgdt <- bgdt[!is.na(ac)]
+# exclude Spis/Scleractinia conserved
+bgdt <- bgdt[!(age %in% c("Scleractinia","Stylophora_specific"))]
+# summarise bg
+bg <- bgdt[,.(numgenebg=.N),.(age)][order(age)]
+bg[,freqbg:=numgenebg/sum(numgenebg)]
+bg[,fbgstr:=sprintf("%.1f%%",freqbg*100)]
+#
+# FORGROUND
+#
+#ct <- "cnidocyte"
+ctgroups <- c("cnidocyte","gastrodermis","germline","digestive_filaments","epidermis","neuron","gland","host_cells")
+enr_plot_list <- lapply(ctgroups, function(ct) {
+  # extract fg
+  fg <- unique(gene_sum_list[[ct]][species=="Spis"][
+    !(age %in% c("Scleractinia","Stylophora_specific"))][
+      ,.(age,ac,numgenes)][order(age,ac)])
+  setnames(fg,"numgenes","numgenefg")
+  fg[,freqfg:=numgenefg/sum(numgenefg),.(ac)] #GROUPING HERE
+  # test
+  allg <- merge.data.table(fg,bg,all.x=TRUE)
+  allg[,totfg:=sum(numgenefg),age]
+  allg[,totbg:=sum(numgenebg),age]
+  allg[,enr:=log2((freqfg+1)/(freqbg+1))]
+  #allg[,pval:=binom.test(numgenefg,totfg,numgenebg/totbg)$p.value,.(age,ac)]
+  pvals <- sapply(1:nrow(allg), function(x) {
+    numgenefg <- allg[x,]$numgenefg
+    totfg <- allg[x,]$totfg
+    numgenebg <- allg[x,]$numgenebg
+    totbg <- allg[x,]$totbg
+    pv <- binom.test(numgenefg,totfg,numgenebg/totbg)$p.value
+    as.numeric(pv)
+  })
+  allg[,pval:=pvals]
+  # format for plotting
+  # allg[,pvalnice:=formatC(pval, format="e", digits=2)]
+  allg[,pvalcode:=""]
+  allg[pval<0.05,pvalcode:="*"]
+  allg[pval<0.001,pvalcode:="**"]
+  allg[pval<0.0001,pvalcode:="***"]
+  # plottinf
+  plot_dt <- allg[ac %in% c("divergent","conserved")]
+  scale_cols <-  gray.colors(4)[1:2] #agecol(8)[1:2]
+  names(scale_cols) <- c("divergent","conserved")
+  ggplot(plot_dt,aes(age,enr,fill=ac)) +
+      geom_bar(stat="identity",position=position_dodge2(width=0.99,preserve="single")) + 
+      geom_text(
+        aes(label=pvalcode, y=enr+0.01*sign(enr)), position=position_dodge(width=0.8), size=2.5)+
+      scale_fill_manual(values=scale_cols,drop=FALSE) + scale_color_manual(values=scale_cols,drop=FALSE) +
+      #scale_y_continuous(expand=c(0,0)) +
+      theme(
+        axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+        axis.line.x=element_blank(), 
+        panel.border = element_blank(),
+        legend.title = element_blank()
+      ) + 
+      labs(title=ct, x=NULL, y="log2ratio")
+})
+names(enr_plot_list) <- ctgroups
+```
+Plot enrichment
+```{r}
+enr_plot_list_plot <- enr_plot_list[c("cnidocyte","gastrodermis","germline","digestive_filaments","epidermis","neuron","gland","host_cells")]
+pdf(
+  sprintf("genes/geneage/gene_ages_Spis_enriched_fc2_vs_vargenes.pdf"),
+  width=8, height=length(enr_plot_list_plot)*5, useDingbats=TRUE
+)
+plotcols = sapply(enr_plot_list_plot,function(gp) length(levels(gp$data$age)))+1
+vcols = max(plotcols)+1
+grid.newpage()
+vrows <- length(enr_plot_list_plot)
+pushViewport(viewport(layout=grid.layout(vrows, vcols)))
+define_region <- function(row, col) viewport(layout.pos.row=row,layout.pos.col=col)
+glegend <- cowplot::get_legend(enr_plot_list_plot[[1]])
+for (i in 1:length(enr_plot_list_plot)) {
+  gp <- enr_plot_list_plot[[i]]
+  print(gp, vp=define_region(i, 1:pmax(plotcols[i],2)))
+}
+dev.off()
+```
+Plot background
+```{r}
+pdf("genes/geneage/gene_ages_Spis_vargenes.pdf",width=6,height=5,useDingbats=TRUE)
+ggplot(bg,aes(x=age,y=numgenebg),fill=gray.colors(4)[3]) + 
+  geom_bar(stat="identity",position=position_dodge2(width=0.99,preserve="single")) +  #color=scale_cols[1],fill=scale_cols[1]
+  geom_text(
+   aes(label=sprintf("%.2f%%",freqbg*100)), vjust=1.5, color="white", position=position_dodge(width=0.8), size=3.5)+
+  scale_y_continuous(expand=c(0,0)) +
+  theme(
+    axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+    axis.line.x=element_blank(), 
+    panel.border = element_blank(),
+    legend.title = element_blank()
+  ) + 
+  labs(title="variable genes", x=NULL, y="number of genes")
+dev.off()
+```
+Barplot per cell type with diff
+```{r}
+all_genes_dt <- fread("genes/all_genes_conservation_OR_fc2.tsv")
+ctgroups <-unique(all_genes_dt$group)[-match(c("expressed","variable"),unique(all_genes_dt$group))]
+iter <- length(ctgroups)
+plot_list <- vector("list",iter)
+gene_sum_list <- lapply(1:iter, function(i){
+  # select cell type
+  x <- ctgroups[[i]]
+  plot_dt_g <- all_genes_dt[group==x]
+  plot_dt_g <- plot_dt_g[!is.na(ac)]
+  # summarize conserved vs divergent per age
+  plot_dt <- plot_dt_g[,.(numgenes=.N),.(age,ac,species)][!(age %in% c("Scleractinia","Stylophora_specific"))]
+  plot_dt[,totgenes:=sum(numgenes),.(species,ac)]
+  plot_dt[,freqgenes:=numgenes/totgenes]
+  plot_dt[,fstr:=sprintf("%.1f%%",freqgenes*100)]
+  plot_dt[!(freqgenes>0.01),fstr:=""]
+  # save
+  #merge.data.table(plot_dt[species=="Spis"],bg,by="age")
+  allg <- merge.data.table(plot_dt[species=="Spis"],bg,on="age")
+  allg[,pval:=binom.test(numgenes,totgenes,freqbg)$p.value,.(age,ac)]
+  # format for plotting
+  allg[,pvalnice:=formatC(pval, format="e", digits=2)]
+  allg[,pvalcode:=""]
+  allg[pval<0.05,pvalcode:="*"]
+  allg[pval<0.001,pvalcode:="**"]
+  allg[pval<0.0001,pvalcode:="***"]
+  allg[,pvalcody:=freqgenes+0.05*max(freqgenes)]
+  bgc <- copy(bg)[,ac:="background"]
+  setnames(bgc,c("numgenebg","freqbg","fbgstr"),c("numgenes","freqgenes","fstr"))
+  all_dt <- rbindlist(list(allg,bgc),use.names=TRUE,fill=TRUE)[,species:="Spis"]
+  # order phylostrata
+  all_dt[,age:=factor(age,levels=age_groups)]
+  # differential
+  plot_dt <- copy(all_dt[,diff:=.SD[ac=="conserved"]$freqgenes-.SD[ac=="divergent"]$freqgenes,.(age)])
+  plot_dt
+})
+names(gene_sum_list) <- ctgroups
+plot_list <- lapply(1:length(gene_sum_list), function(i) {
+  plot_dt <- gene_sum_list[[i]]
+  # colors for conserved vs divergent
+  scale_cols <-  gray.colors(4)[c(3,1:2)] #agecol(8)[c(3,1:2)]
+  names(scale_cols) <- c("background","divergent","conserved")
+  plot_dt[,age:=factor(age,levels=age_groups)]
+  plot_dt[,ac:=factor(ac, levels=names(scale_cols))]
+  # plot
+  ggplot(plot_dt,aes(x=age,y=freqgenes,fill=ac,color=ac)) + 
+    geom_bar(stat="identity",position=position_dodge2(width=0.99,preserve="single")) + 
+    scale_fill_manual(values=scale_cols,drop=FALSE) + scale_color_manual(values=scale_cols,drop=FALSE) +
+    scale_y_continuous(expand=c(0,0),labels=scales::percent) +
+    # stat_pvalue_manual(
+    #   stattest, label=sign.label, #y.position="y", 
+    #   step.increase=step.increase, step.group.by="age", 
+    #   label.size = label.size/3.88, tip.length=tip.length
+    # ) +
+    geom_text(aes(label=numgenes), vjust=1.5, color="white", position=position_dodge(width=0.8), size=2.5) +
+    geom_text(aes(label=pvalcode,y=pvalcody), vjust=1.5, color="black", size=3, position=position_dodge(width=1)) +
+    theme(
+      axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+      axis.line.x=element_blank(), 
+      panel.border = element_blank(),
+      legend.title = element_blank()
+    ) + 
+    labs(title=names(gene_sum_list)[i],x=NULL, y=NULL)
+})
+names(plot_list) <- ctgroups
+```
+Save plots
+```{r}
+pdf(
+  sprintf("genes/geneage/gene_ages_Spis_enriched_fc2_vs_vargenes_freq.pdf"),
+  width=12, height=length(plot_list)*5, useDingbats=TRUE
+)
+plotcols = sapply(plot_list,function(gp) length(levels(gp$data$age)))+1
+vcols = max(plotcols)+1
+grid.newpage()
+vrows <- length(plot_list)
+pushViewport(viewport(layout=grid.layout(vrows, vcols)))
+define_region <- function(row, col) viewport(layout.pos.row=row,layout.pos.col=col)
+glegend <- cowplot::get_legend(plot_list[[1]])
+for (i in 1:length(plot_list)) {
+  gp <- plot_list[[i]]
+  print(gp, vp=define_region(i, 1:pmax(plotcols[i],2)))
+}
+dev.off()
+```
+Barplot of conserved/divergent differentials
+```{r}
+plot_list_dif <- lapply(1:length(gene_sum_list), function(i) {
+  plot_dt <- gene_sum_list[[i]]
+  # plot
+  ggplot(plot_dt,aes(x=age,y=diff)) + 
+    geom_bar(stat="identity") + 
+    theme(
+      axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+      axis.line.x=element_blank(), 
+      panel.border = element_blank(),
+      legend.title = element_blank()
+    ) + 
+    labs(title=names(gene_sum_list)[i],x=NULL, y="conserved - divergent frequency")
+})
+names(plot_list_dif) <- ctgroups
+```
+Save plots
+```{r}
+pdf(
+  sprintf("genes/geneage/gene_ages_Spis_enriched_fc2_vs_vargenes_diff.pdf"),
+  width=12, height=length(plot_list_dif)*5, useDingbats=TRUE
+)
+plotcols = sapply(plot_list_dif,function(gp) length(levels(gp$data$age)))+1
+vcols = max(plotcols)+1
+grid.newpage()
+vrows <- length(plot_list_dif)
+pushViewport(viewport(layout=grid.layout(vrows, vcols)))
+define_region <- function(row, col) viewport(layout.pos.row=row,layout.pos.col=col)
+glegend <- cowplot::get_legend(plot_list_dif[[1]])
+for (i in 1:length(plot_list_dif)) {
+  gp <- plot_list_dif[[i]]
+  print(gp, vp=define_region(i, 1:pmax(plotcols[i],2)))
+}
+dev.off()
+```
+
+#### Enrichment (Spis innovations)
+```{r}
+#
+# BACKGROUND
+#
+# div for all genes
+gs <- unique(all_genes_dt[!is.na(ac)][,.(gene,ac)][order(gene)])
+dgs <- gs[,.N,gene][N>1]$gene
+gs[gene %in% dgs, ac:="divergent"]
+gsdt <- unique(gs)
+# variable genes bg
+vardt <- copy(all_genes_dt[group=="variable"][,ac:=NULL])
+bgdt <- merge.data.table(vardt,gsdt,by="gene",all.x=TRUE,all.y=FALSE)
+# exclude genes without orthologs (cant deermine divergence/conservation)
+bgdt <- bgdt[!is.na(ac)]
+# summarise bg
+bg <- bgdt[,.(numgenebg=.N),.(age)][order(age)]
+bg[,freqbg:=numgenebg/sum(numgenebg)]
+bg[,fbgstr:=sprintf("%.1f%%",freqbg*100)]
+#
+# FORGROUND
+#
+#ct <- "cnidocyte"
+ctgroups <- c("immune","unknown","mitotic_host_cells","calicoblast")
+enr_plot_dat <- lapply(ctgroups, function(ct) {
+  # extract fg
+  fg <- unique(gene_sum_list[[ct]][species=="Spis"][
+      ,.(age,ac,numgenes)][order(age,ac)])
+  setnames(fg,"numgenes","numgenefg")
+  fg[,freqfg:=numgenefg/sum(numgenefg),.(ac)] #GROUPING HERE
+  # test
+  allg <- merge.data.table(fg,bg,all.x=TRUE)
+  allg[,totfg:=sum(numgenefg),age]
+  allg[,totbg:=sum(numgenebg),age]
+  allg[,enr:=log2((freqfg+1)/(freqbg+1))]
+  # allg[,pval:=binom.test(numgenefg,totfg,numgenebg/totbg)$p.value,age]
+  # format for plotting
+  # allg[,pvalnice:=formatC(pval, format="e", digits=2)]
+  # allg[,pvalcode:=""]
+  # allg[pval<0.05,pvalcode:="*"]
+  # allg[pval<0.001,pvalcode:="**"]
+  # allg[pval<0.0001,pvalcode:="***"]
+  allg[ac %in% c("divergent","conserved")]
+})
+names(enr_plot_dat) <- ctgroups
+enr_plot_list <- lapply(names(enr_plot_dat), function(ct) {
+  # plottinf
+  plot_dt <- enr_plot_dat[[ct]]
+  ggplot(plot_dt,aes(age,enr), fill=gray.colors(4)[1],color=gray.colors(4)[1]) +
+      geom_bar(stat="identity",position=position_dodge2(width=0.99,preserve="single")) + 
+      theme(
+        axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+        axis.line.x=element_blank(), 
+        panel.border = element_blank(),
+        legend.title = element_blank()
+      ) + 
+      labs(title=ct, x=NULL, y="log2ratio")
+})
+names(enr_plot_list) <- ctgroups
+```
+Plot enrichment
+```{r}
+pdf(
+  sprintf("genes/geneage/gene_ages_Spis_enriched_fc2_vs_vargenes_innovations.pdf"),
+  width=8, height=length(enr_plot_list)*5, useDingbats=TRUE
+)
+plotcols = sapply(enr_plot_list,function(gp) length(levels(gp$data$age)))+1
+vcols = max(plotcols)+1
+grid.newpage()
+vrows <- length(enr_plot_list)
+pushViewport(viewport(layout=grid.layout(vrows, vcols)))
+define_region <- function(row, col) viewport(layout.pos.row=row,layout.pos.col=col)
+glegend <- cowplot::get_legend(enr_plot_list[[1]])
+for (i in 1:length(enr_plot_list)) {
+  gp <- enr_plot_list[[i]]
+  print(gp, vp=define_region(i, 1:pmax(plotcols[i],2)))
+}
+dev.off()
+```
+Plot background
+```{r}
+pdf("genes/geneage/gene_ages_Spis_vargenes_innovations.pdf",width=6,height=5,useDingbats=TRUE)
+ggplot(bg,aes(x=age,y=numgenebg),fill=gray.colors(4)[3]) + 
+  geom_bar(stat="identity",position=position_dodge2(width=0.99,preserve="single")) +  #color=scale_cols[1],fill=scale_cols[1]
+  geom_text(
+   aes(label=sprintf("%.2f%%",freqbg*100)), vjust=1.5, color="white", position=position_dodge(width=0.8), size=3.5)+
+  scale_y_continuous(expand=c(0,0)) +
+  theme(
+    axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+    axis.line.x=element_blank(), 
+    panel.border = element_blank(),
+    legend.title = element_blank()
+  ) + 
+  labs(title="variable genes", x=NULL, y="number of genes")
+dev.off()
+```
+Barplot per cell type with diffo
+```{r}
+all_genes_dt <- fread("genes/all_genes_conservation_OR_fc2.tsv")
+ctgroups <- c("immune","unknown","mitotic_host_cells","calicoblast")
+iter <- length(ctgroups)
+plot_list <- vector("list",iter)
+gene_sum_list <- lapply(1:iter, function(i){
+  # select cell type
+  x <- ctgroups[[i]]
+  plot_dt_g <- all_genes_dt[group==x]
+  plot_dt_g <- plot_dt_g[!is.na(ac)]
+  # summarize conserved vs divergent per age
+  plot_dt <- plot_dt_g[,.(numgenes=.N),.(age,ac,species)]
+  plot_dt[,totgenes:=sum(numgenes),.(species,ac)]
+  plot_dt[,freqgenes:=numgenes/totgenes]
+  plot_dt[,fstr:=sprintf("%.1f%%",freqgenes*100)]
+  plot_dt[!(freqgenes>0.01),fstr:=""]
+  # save
+  #merge.data.table(plot_dt[species=="Spis"],bg,by="age")
+  allg <- merge.data.table(plot_dt[species=="Spis"],bg,on="age")
+  allg[,pval:=binom.test(numgenes,totgenes,freqbg)$p.value,.(age,ac)]
+  # format for plotting
+  allg[,pvalnice:=formatC(pval, format="e", digits=2)]
+  allg[,pvalcode:=""]
+  allg[pval<0.05,pvalcode:="*"]
+  allg[pval<0.001,pvalcode:="**"]
+  allg[pval<0.0001,pvalcode:="***"]
+  allg[,pvalcody:=freqgenes+0.05*max(freqgenes)]
+  bgc <- copy(bg)[,ac:="background"]
+  setnames(bgc,c("numgenebg","freqbg","fbgstr"),c("numgenes","freqgenes","fstr"))
+  all_dt <- rbindlist(list(allg,bgc),use.names=TRUE,fill=TRUE)[,species:="Spis"]
+  # order phylostrata
+  all_dt[,age:=factor(age,levels=age_groups)]
+  # differential
+  plot_dt <- copy(all_dt[,diff:=.SD[ac=="conserved"]$freqgenes-.SD[ac=="divergent"]$freqgenes,.(age)])
+  plot_dt
+})
+names(gene_sum_list) <- ctgroups
+plot_list <- lapply(1:length(gene_sum_list), function(i) {
+  plot_dt <- gene_sum_list[[i]]
+  # colors for conserved vs divergent
+  scale_cols <-  gray.colors(4)[c(3,1:2)] #agecol(8)[c(3,1:2)]
+  names(scale_cols) <- c("background","divergent","conserved")
+  plot_dt[,age:=factor(age,levels=age_groups)]
+  plot_dt[,ac:=factor(ac, levels=names(scale_cols))]
+  # plot
+  ggplot(plot_dt,aes(x=age,y=freqgenes,fill=ac,color=ac)) + 
+    geom_bar(stat="identity",position=position_dodge2(width=0.99,preserve="single")) + 
+    scale_fill_manual(values=scale_cols,drop=FALSE) + scale_color_manual(values=scale_cols,drop=FALSE) +
+    scale_y_continuous(expand=c(0,0),labels=scales::percent) +
+    # stat_pvalue_manual(
+    #   stattest, label=sign.label, #y.position="y", 
+    #   step.increase=step.increase, step.group.by="age", 
+    #   label.size = label.size/3.88, tip.length=tip.length
+    # ) +
+    geom_text(aes(label=numgenes), vjust=1.5, color="white", position=position_dodge(width=0.8), size=2.5) +
+    geom_text(aes(label=pvalcode,y=pvalcody), vjust=1.5, color="black", size=3, position=position_dodge(width=1)) +
+    theme(
+      axis.text.x=element_text(angle=30,hjust=1), #vjust=0.5
+      axis.line.x=element_blank(), 
+      panel.border = element_blank(),
+      legend.title = element_blank()
+    ) + 
+    labs(title=names(gene_sum_list)[i],x=NULL, y=NULL)
+})
+names(plot_list) <- ctgroups
+```
+Save plots
+```{r}
+pdf(
+  sprintf("genes/geneage/gene_ages_Spis_enriched_fc2_vs_vargenes_freq_innovations.pdf"),
+  width=12, height=length(plot_list)*5, useDingbats=TRUE
+)
+plotcols = sapply(plot_list,function(gp) length(levels(gp$data$age)))+1
+vcols = max(plotcols)+1
+grid.newpage()
+vrows <- length(plot_list)
+pushViewport(viewport(layout=grid.layout(vrows, vcols)))
+define_region <- function(row, col) viewport(layout.pos.row=row,layout.pos.col=col)
+glegend <- cowplot::get_legend(plot_list[[1]])
+for (i in 1:length(plot_list)) {
+  gp <- plot_list[[i]]
+  print(gp, vp=define_region(i, 1:pmax(plotcols[i],2)))
+}
+dev.off()
+```

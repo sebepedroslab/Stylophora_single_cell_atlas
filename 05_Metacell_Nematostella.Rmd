@@ -1,0 +1,1197 @@
+---
+title: "05. Nematostella vectensis metacell analysis"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+auhor: "Anamaria Elek"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    toc_depth: 2
+---
+```{r options, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE, fig.align = 'center')
+```
+
+# Set up metacell analysis
+
+Load required packages and functions.
+
+```{r setup, eval=TRUE, message=FALSE, warning=FALSE}
+library(data.table)
+library(ggplot2)
+library(ggrepel)
+library(ggrastr)
+library(plotly)
+library(scales)
+library(stringr)
+library(RColorBrewer)
+library(circlize)
+library(tgconfig)
+library(metacell)
+theme_py <- theme_classic() + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_rect(colour = "black", fill = NA),
+  text = element_text(size=20)
+)
+theme_set(theme_py)
+# load functions for downstream analysis
+scripts <- list.files("metacell_downstream_functions",full.names=TRUE)
+for (file in scripts) source(file)
+```
+
+Initialize database and figures output directory.
+
+```{r mc_setup, eval=TRUE, warning=FALSE, message=FALSE}
+require(metacell)
+
+# analysis dir
+cluster_dir <- "clustering_nematostella"
+dir.create(cluster_dir, showWarnings=FALSE)
+
+# initialize db directory
+scdb_dir <- file.path(cluster_dir, "scdb")
+dir.create(scdb_dir, showWarnings=FALSE)
+scdb_init(scdb_dir, force_reinit=TRUE)
+
+# plotting directory
+scdb_fig_dir <- file.path(scdb_dir,"figs")
+dir.create(scdb_fig_dir, showWarnings=FALSE)
+scfigs_init(scdb_fig_dir)
+
+# directory with annotations
+annot_dir <- "annotation_nematostella"
+```
+
+# Metacell piepline
+
+## Input data filtering
+
+Load the expression data to metacell database.  
+
+```{r mcell_import}
+# import UMI table
+mat_nm <- "nvec"
+mcell_import_multi_mars(
+  mat_nm = mat_nm,
+  dataset_table_fn = file.path(cluster_dir, "MARS_Batches.txt"),
+  base_dir = "umi.tab",
+  force = TRUE
+)
+mat <- scdb_mat(mat_nm)
+```
+
+Filter ERCCs
+
+```{r mcell_filter_genes}
+erccs <- rownames(mat@mat)[grepl("ERCC",rownames(mat@mat))] 
+peaks_counts <- rowSums(as.matrix(mat@mat[grepl("_peak_",rownames(mat@mat)),]))
+peaks_ignore <- names(which(peaks_counts<100))
+mcell_mat_ignore_genes(new_mat_id = mat_nm, mat_id = mat_nm, ig_genes = c(erccs,peaks_ignore))
+mat <- scdb_mat(mat_nm)
+```
+
+Filter by cell depth (UMIs/cell)
+
+```{r mcell_filter}
+x <- colSums(as.matrix(mat@mat))
+mcell_plot_umis_per_cell(mat_id = mat_nm, min_umis_cutoff = 100)
+large_cells <- names(which(x>10000))
+small_cells <- names(which(x<100))
+mat_nm_filt <- "nvec_100"
+mcell_mat_ignore_cells(new_mat_id = mat_nm_filt ,mat_id = mat_nm, ig_cells=c(small_cells,large_cells))
+mat <- scdb_mat(mat_nm_filt)
+```
+
+```{r old_cells, include=FALSE}
+mat_nm_filt <- "nvec_adult_filt"
+mat <- scdb_mat(mat_nm_filt)
+
+oldsolution <- fread("/users/asebe/asebe/proj/scRNA_nvec_v2/Nematostella/Nematostella_adult_metacell_assignments")
+
+olds <- !(oldsolution$Cell %in% mat@cells)
+news <- !(mat@cells %in% oldsolution$Cell)
+
+sprintf("In old solution but not in new: %s (%.1f%%)", sum(olds), mean(olds)*100)
+sprintf("In new solution but not in old: %s (%.1f%%)", sum(news), mean(news)*100)
+```
+```{r new_cells, include=FALSE}
+newcells <- mat@cells[news]
+mat_nm_additional <- "nvec_adult_additional"
+mcell_mat_ignore_cells(new_mat_id = mat_nm_additional, mat_id = mat_nm_filt, ig_cells=newcells, reverse = TRUE)
+mat_additional <- scdb_mat(mat_nm_additional)
+mcell_plot_umis_per_cell(mat_id = mat_nm_additional, min_umis_cutoff = 100)
+```
+
+Calculate gene statistics
+
+```{r mcell_gstat}
+mcell_add_gene_stat(gstat_id = "gstat", mat_id = mat_nm_filt, force = TRUE)
+mat <- scdb_mat(mat_nm_filt)
+```
+
+
+## Building metacells
+
+Select marker genes for building metacell graph.  
+
+```{r mcell_markers}
+morange <- rownames(mat@mat)[grepl("mOrange",rownames(mat@mat))] 
+bkg <- readLines("annotation/black_list_genes")
+mcell_gset_filter_multi(
+  gstat_id = "gstat",
+  gset_id = "clust_markers",
+  T_tot = 30, T_top3 = 2, T_szcor = -0.05, T_niche = 0.05, 
+  blacklist = c(morange,bkg), force_new=TRUE
+)
+mcell_plot_gstats(gstat_id = "gstat", gset_id = "clust_markers")
+# 998
+```
+
+Build metacells
+
+```{r mcell_knn}
+# build cell graph
+mcell_add_cgraph_from_mat_bknn(
+  mat_id = mat_nm_filt,
+  gset_id = "clust_markers",
+  graph_id = "graphk100", K = 100, dsamp=FALSE
+)
+
+# resample graph and compute metacells for each resampling
+mcell_coclust_from_graph_resamp(
+  coc_id = "coc500_min20",
+  graph_id = "graphk100",
+  min_mc_size = 20, p_resamp = 0.75, n_resamp = 1000
+)
+
+# final graph and metacells from co-occurence in resampled graphs
+mcell_mc_from_coclust_balanced(
+  mc_id = "mc_k30",
+  coc_id = "coc500_min20",
+  mat_id = mat_nm_filt,
+  K = 30, min_mc_size = 20, alpha = 2 # changed from K=100
+)
+
+# added
+# mcell_mc_split_filt(
+#   new_mc_id = "mc", 
+#   mc_id = "mc_k30",
+#   mat_id = mat_nm_filt, 
+#   T_lfc = 4, plot_mats = FALSE
+# )
+
+mc <- scdb_mc("mc_k30")
+```
+
+## Filtering bad metacells
+
+```{r mcell_load_filt, echo=FALSE, eval=TRUE}
+mc_id <- "mc_k30"
+mat_id <- "nvec_100"
+mat <- scdb_mat(mat_id)
+mc <- scdb_mc(mc_id)
+mcs <- colnames(mc@mc_fp)
+marker_genes_gset <- scdb_gset(id="clust_markers")
+marker_genes <- names(marker_genes_gset@gene_set)
+```
+
+The following criteria are used for filtering out bad metacells:
+
+* **number of genes with non-zero UMIs** summarized across all cells in metacell - metacells consisting of cells that express very low number of genes are potentially bad metacells
+
+```{r nonzero_umi, eval=TRUE}
+# count genes with non-zero UMIs in single cells
+csums <- lapply(mcs, function(mcid) {
+  mc_cells <- names(mc@mc[mc@mc==mcid])
+  mc_cells <- intersect(mc_cells,colnames(mat@mat))
+  nonzerogenes <- Matrix::colSums(mat@mat[marker_genes,mc_cells]>0)
+  data.table(non_zero_genes_per_cell = nonzerogenes)
+})
+csumsdt <- rbindlist(csums,idcol = "mc")
+csumsdt[,mc:=factor(mc,levels=mcs)]
+# summarize by taking the peak of distribution of non-zero UMI counts in the cells in each metacell
+csumsdtmean <- csumsdt[,.SD[,.(
+  non_zero_genes_peak={
+    dns = density(non_zero_genes_per_cell)
+    ind = which.max(dns$y)
+    dns$x[ind]
+})],mc]
+```
+
+* **total number of UMIs** summed across all cells in metacell - metacells consisting of very small cells, with a low UMI count, are potentially bed metacells.
+
+```{r total_umi, eval=TRUE}
+# count total UMIs in cells
+umisums <- lapply(mcs, function(mcid) {
+  mc_cells <- names(mc@mc[mc@mc==mcid])
+  mc_cells <- intersect(mc_cells,colnames(mat@mat))
+  mc_table <- mat@mat[marker_genes,mc_cells]
+  totalumis <- Matrix::colSums(mc_table)
+  data.table(total_umis_per_cell = totalumis)
+})
+umisumsdt <- rbindlist(umisums,idcol = "mc")
+umisumsdt[,mc:=factor(mc,levels=mcs)]
+# summarize by taking the sum of total UMIs in the cells in each metacell
+umisumsdtsum <- umisumsdt[,.(total_umis=sum(total_umis_per_cell)),mc]
+```
+
+By combining the previous criteria we identify a pool of potentially bad metacells as those with non-zero UMI counts and total UMI counts below respective distribution peak. 
+
+```{r mc_filt_bad, eval=TRUE}
+# combine the metrics
+dt <- csumsdtmean[umisumsdtsum,on="mc"]
+
+# non-zero UMI genes threshold
+dnonzeroumi <- density(dt$non_zero_genes_peak,adjust=0.5)
+#nonzerothrs <- dnonzeroumi$x[which.max(dnonzeroumi$y)]
+nonzerothrs <- 30
+plot(dnonzeroumi,main="non-zero UMIs"); abline(v=nonzerothrs)
+
+# total UMI threshold
+dumi <- density(dt$total_umis,adjust=0.3)
+#totumithrs <- dumi$x[which.max(dumi$y)]
+totumithrs <- 12000
+plot(dumi,main="total UMIs"); abline(v=totumithrs)
+```
+
+As a final criteria, we retain those potentially bad metacells that express more than 2 known TFs, if they also have moe than 2k UMIs
+
+* **expression of known TFs**
+
+```{r mc_filt_tf, eval=TRUE, fig.width=12, fig.height=3}
+TFs_dt <- fread(file.path(annot_dir,"000TF_ANNOTATION_NEW"), header=FALSE)
+# number of TFs expressed in metacells
+tfs <- intersect(TFs_dt$V1,rownames(mc@mc_fp))
+tfsmc <- apply(mc@mc_fp[tfs,],2,function(x) sum(x>2.5))
+#png(file.path(scdb_fig_dir,sprintf("num_tfs_barplot.png")),width=1800,height=300)
+barplot(tfsmc,las=2,xlab="metacell",ylab="number of TFs")
+tfthrs <- 4
+abline(h=tfthrs)
+#dev.off()
+```
+
+Inspect metacells' statistics. 
+
+```{r}
+tfdt <- data.table(mc=names(tfsmc),num_TFs=tfsmc)
+dtt <- dt[tfdt,on="mc"]
+# thresholding metacells
+dtt[,status:="good"]
+dtt[non_zero_genes_peak<nonzerothrs & total_umis<totumithrs, status:="bad"]
+dtt[num_TFs>tfthrs & total_umis>2000, status:="good"]
+dtt[,num_TFs_scaled:=pmin(num_TFs,5)]
+gp <- ggplot(dtt,aes(non_zero_genes_peak,total_umis,label=mc,color=status)) + 
+  geom_hline(yintercept=totumithrs, linetype="dashed") +  
+  geom_vline(xintercept = nonzerothrs, linetype="dashed") +
+  geom_point(aes(size=num_TFs_scaled),alpha=0.9) + scale_size(breaks=1:5,labels=c(1:4,">4"),name="# TFs") +
+  geom_text_repel(show.legend=FALSE) + 
+  scale_y_log10() + scale_x_log10() +
+  labs(x="non-zero UMIs", y="total UMIs") +
+  guides(colour=guide_legend(title="metacell",override.aes=list(size=6)))
+#ggplotly(gp)
+#gp
+ggsave(
+  file.path(scdb_fig_dir,sprintf("killing_%.0fnonzeroUMI_%.0ftotUMI_%s_TFs.png",nonzerothrs,totumithrs,tfthrs)),
+  gp,width=10,height=8
+)
+```
+
+Remove bad metacells.
+
+```{r mc_kill}
+kill_mcs <- dtt[status=="bad",mc]
+writeLines(kill_mcs,file.path(scdb_dir,"kill_mcs.txt"))
+mc <- mc_set_outlier_mc(mc,as.integer(kill_mcs))
+mc <- mc_update_stats(mc,mat)
+scdb_add_mc("mc_kill",mc)
+```
+
+# Transfer annotations
+```{r mcel_transfann_setup}
+mc_id <- "mc_071320"
+mat_id <- "nvec_100"
+mc <- scdb_mc(mc_id)
+mat <- scdb_mat(mat_id)
+
+bkg <- readLines("annotation/black_list_genes")
+if (all(!grepl("$Nvec_",bkg)))
+  bkg <- paste0("Nvec_",bkg)
+  
+ann <- fread(file.path(scdb_dir,"Metacell_annotation_071320"))
+setnames(ann,c("metacell","cell_type","color"))
+```
+
+```{r cells_compara}
+# old metacell, cell type, and colour
+#meta_df <- fread("annotation/Adult_metacell_annotation_OLD")
+meta_df <- fread("clustering_adult/Old_Gland_zoomin_metacell_annotation")
+setnames(meta_df,c("metacell","cell_type","color"))
+col_df <- unique(meta_df[,.(cell_type,color)])
+setnames(col_df,c("cell_type","color"))
+col_df <- rbindlist(list(col_df,data.table(cell_type="additional",color="antiquewhite")))
+
+# cell - metacell
+mc_df <- data.table(cell=names(mc@mc),metacell=mc@mc)
+mc_df <- mc_df[metacell %in% ann[cell_type=="Gland_secretory",metacell]]
+
+# cell - cell type
+cell_df <- fread("annotation/Adult_cell_annotation_OLD")
+setnames(cell_df,c("cell","cell_type"))
+newcells <- data.table(
+  cell = mc_df$cell[!(mc_df$cell %in% cell_df$cell)],
+  cell_type = "additional"
+)
+cell_df <- rbindlist(list(cell_df,newcells))
+```
+
+```{r transfer_annot}
+# transfer annotations
+ann_tr <- sca_transfer_annotations(
+  cell_df = cell_df, mc_df = mc_df, color_df = col_df, niche_order = colnames(mc@mc_fp),
+  output_file = file.path(scdb_fig_dir,"transfer_annots_neuro.png"), 
+  width = 2000, height = 400, res = 110
+)
+```
+
+
+# Annotation correlations
+
+Load data 
+
+```{r load_data_comp}
+mc_id <- "mc_071320"
+mat_id <- "nvec_100"
+mc <- scdb_mc(mc_id)
+mat <- scdb_mat(mat_id)
+```
+
+Old data
+
+```{r load_old_comp, eval=TRUE}
+#old_mcfp <- read.table("annotation/Nematostella_adult_metacell_gene_FC_OLD")
+#old_mcfp <- read.table("clustering_adult/Old_Neurons_zoomin_gene_FC")
+old_mcfp <- read.table("clustering_adult/Old_Muscle_zoomin_gene_FC")
+#old_annot <- fread("annotation/Nematostella_adult_metacell_assignments_OLD")
+#old_annot <- fread("clustering_adult/Old_Neuronal_zoomin_cell_mc_assignment")
+#setnames(old_annot,c("cell","metacell"))
+
+rownames(old_mcfp) <- paste0("Nvec_",rownames(old_mcfp))
+colnames(old_mcfp) <- str_remove(colnames(old_mcfp),"X")
+var_genes <- names(which(apply(old_mcfp,1,max)>2))
+```
+
+Correlation with adult
+
+```{r larva_adult_comp}
+cor_method <- "spearman"
+comp_method = "jaccard"
+gene_list <- list("vargenes"=var_genes) #"neurogenes"=c(neuro_genes_1,neuro_genes_2)
+gi <- 1
+cors <- sca_clustering_correlation(
+  matrix1 = old_mcfp, 
+  matrix2 = mc@mc_fp,#[,colnames(mc@mc_fp) %in% ann[cell_type=="Gland_secretory",metacell]], 
+  markers = gene_list[[gi]], 
+  original_ordering_1st = TRUE, original_ordering_2nd = TRUE,
+  #annotation_file_1 = "annotation/Adult_metacell_annotation_OLD",
+  annotation_file_1 = "clustering_adult/Old_Muscle_zoomin_metacell_annotation",
+  cor_method = cor_method, pmin = 0.8,
+  output_file = file.path(scdb_fig_dir,sprintf("nvec_muscle_%s_vs_old_%s_%s.png",mc_id,cor_method,names(gene_list)[gi])),
+  height = 1000, width = 3200
+)
+lfc_threshold <- 1.2
+jacc <- sca_clustering_comparison(
+  matrix1 = old_mcfp, 
+  matrix2 = mc@mc_fp,#[,colnames(mc@mc_fp) %in% ann[cell_type=="Gland_secretory",metacell]],
+  markers = gene_list[[gi]], lfc_threshold = lfc_threshold,
+  original_ordering_1st = TRUE, original_ordering_2nd = TRUE, comp_method = comp_method, 
+  #annotation_file_1 = "annotation/Adult_metacell_annotation_OLD",
+  annotation_file_1 = "clustering_adult/Old_Muscle_zoomin_metacell_annotation",
+  output_file = file.path(
+    scdb_fig_dir,sprintf("nvec_muscle_%s_vs_old_%s_%s_%s.png",mc_id,comp_method,names(gene_list)[gi],lfc_threshold)
+  ), height = 1000, width = 3200
+)
+```
+
+Save cell and metacell annotations.  
+
+```{r, annot_files_save}
+mc <- scdb_mc("mc_filt")
+mc_annotation <- unique(cell_annotation[,.(mc,cell_type,colour)])
+mc_cell_info <- cell_annotation[,.(cell,mc,cell_type,colour)]
+
+mc_annotation_file <- file.path(scdb_dir,"Adult_metacell_annotation")
+mc_cell_info_file <- file.path(scdb_dir,"Adult_cell_annotoation")
+
+fwrite(mc_annotation, mc_annotation_file, sep="\t")
+fwrite(mc_cell_info, mc_cell_info_file, sep="\t")
+```
+
+Fix transferrerd annotations after inspecting 2d plot and heatmap
+
+```{r fix_cols}
+mc_annotation_file <- file.path(scdb_dir,"Adult_metacell_annotation_transferred")
+mc_annotation <- fread(mc_annotation_file, sep="\t")
+
+# update metacells colors
+colid <- match(mc@annots,mc_annotation$mc)
+niche_col_new <- mc_annotation[colid,colour]
+mc@colors <- niche_col_new
+
+# add new mc object to db
+scdb_add_mc(id="mc_filt", mc=mc)
+```
+
+
+# Cell type annotations
+
+Load objects from metacell database
+
+```{r transfer_annots_setup}
+mc_id <- "mc_071620"
+mat_id <- "nvec_100"
+mc <- scdb_mc(mc_id)
+mat <- scdb_mat(mat_id)
+```
+
+Create reordered and annotated metacell object.
+
+```{r mc_reord_annot}
+annk <- fread("clustering_adult/Metacell_annotation_071620_reord")
+ctcol <- annk$color
+names(ctcol) <- annk$metacell
+ctcolbroad <- annk$broad_color
+names(ctcol) <- annk$metacell
+
+# clustering conf
+confu <- mc_compute_norm_confu_matrix(mc_id,"graphk100")
+hc_confu <- mc_confusion_clustering(confu,clust_method="average")
+tree_confu <- as.phylo(hc_confu)
+
+png(file.path(scdb_fig_dir,"tree_confu_hclust.png"),height=2400,width=1200,res=100)
+plot(tree_confu,tip.color=ctcol[tree_confu$tip.label])
+dev.off()
+
+# clustering cor
+var_genes <- names(which(apply(mc@mc_fp,1,function(x) sort(x,decreasing=T)[2])>2)) # 3196
+hc_cor <- hclust(dist(cor(mc@mc_fp[var_genes,],method="pearson")), "average")
+tree_cor <- as.phylo(hc_cor)
+
+png(file.path(scdb_fig_dir,"tree_vargenesfc2_hclust.png"),height=2400,width=1200,res=100)
+plot(tree_cor,tip.color=ctcol[tree_cor$tip.label])
+dev.off()
+
+# compare clustering
+# compare=phytools::cophylo(tree_cor, tree_confu)
+# png(file.path(scdb_fig_dir,"compare_tree_vargenes2fc_confu.png"),h=3000,w=2000)
+# plot(compare)
+# tiplabels.cophylo(pch=19,cex=3,col=ctcol[compare$trees[[1]]$tip.label],which="left")
+# tiplabels.cophylo(pch=19,cex=3,col=ctcol[compare$trees[[2]]$tip.label],which="right")
+# dev.off()
+
+# de neuro gland
+ics <- fread(file.path(annot_dir, "curated_ionchannels_Nvec_SD1.csv"),header=FALSE)$V1
+exp_ics <- intersect(rownames(mc@mc_fp),gpcrs)
+var_ics <- names(which(apply(mc@mc_fp[exp_ics,],1,function(x) sort(x,decreasing=T)[2])>2)) # 129
+mc_ics <- apply(mc@mc_fp[exp_ics,annk$metacell],2,function(x) sum(x>2))
+
+gpcrs <- fread(file.path(annot_dir, "curated_GPCR_Nvec.csv"),header=FALSE)$V1
+exp_gpcrs <- intersect(rownames(mc@mc_fp),ics)
+var_gpcrs <- names(which(apply(mc@mc_fp[exp_gpcrs,],1,function(x) sort(x,decreasing=T)[2])>2)) # 89
+mc_gpcrs <- apply(mc@mc_fp[exp_gpcrs,annk$metacell],2,function(x) sum(x>2))
+
+png(file.path(scdb_fig_dir,"mc_gpcrs_ionchannels_fc2_new.png"),h=1200,w=3000,res=110)
+par(mfrow=c(2,1))
+barplot(mc_gpcrs,las=2,col=annk$color,xlab="metacell",ylab="number of genes with fc>2", main="GPCRs")
+barplot(mc_ics,las=2,col=annk$color,xlab="metacell",ylab="number of genes with fc>2", main="ion channels")
+dev.off()
+
+plot(mc_ics, mc_gpcrs, col=annk$color)
+
+# new
+mess <- fread("clustering_adult/neuro_gland_mess.tsv")
+setnames(mess, colnames(annk))
+new_ann <- rbindlist(list(annk[!metacell %in% mess$metacell],mess))
+new_mcord <- match(annk$metacell[hc_cor$order], new_ann$metacell)
+fwrite(new_ann[new_mcord], "clustering_adult/Metacell_annotation_080420_hclust", sep="\t")
+
+# manualy reorder clustering_adult/Metacell_annotation_080420_hclust and save new ann file
+# clustering_adult/Metacell_annotation_080420_reord
+# (also changed some annots, e.g. introduced Gastrodermis_1 and Gastrodermis_2)
+```
+```{r}
+annk <- fread("clustering_adult/Metacell_annotation_071620_reord")
+# reorder
+mc_reord <- mc_reorder(mc, as.integer(annk$metacell))
+mc_reord@colors <- annk$color
+
+# add mc object
+# if (all(!grepl("$Nvec_",rownames(mc_reord@mc_fp)))) {
+#   rownames(mc_reord@mc_fp) <- paste0("Nvec_",rownames(mc_reord@mc_fp))
+#   rownames(mc_reord@e_gc) <- paste0("Nvec_",rownames(mc_reord@e_gc))
+# }
+scdb_add_mc("mc_081820",mc_reord)
+# if (all(!grepl("$Nvec_",rownames(mat@mat)))) {
+#   rownames(mat@mat) <- paste0("Nvec_",rownames(mat@mat))
+# }
+# scdb_add_mat(mat_id,mat)
+
+# save final annots
+ann_final <- file.path(scdb_dir,"Metacell_annotation_081820")
+fwrite(annk[,metacell:=1:.N], ann_final, sep="\t")
+```
+
+# Save metacell output files.
+
+```{r mc_save}
+mc_id <- "mc_081820"
+mat_id <- "nvec_100"
+mc <- scdb_mc(mc_id)
+mat <- scdb_mat(mat_id)
+
+ann <- fread(file.path(scdb_dir, sprintf("Metacell_annotation_%s",str_remove(mc_id,"mc_"))))
+fwrite(ann, file.path(scdb_dir, "Nvec_adult_metacell_annotation"), sep="\t")
+
+write.table(
+  mc@mc_fp, file=file.path(scdb_dir, "Nvec_adult_metacell_gene_FC"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+
+mc_umis_list <- lapply(colnames(mc@mc_fp), function(x) {
+  cells <- names(mc@mc)[mc@mc==x]
+  Matrix::rowSums(mat@mat[,cells])
+})
+mc_umis <- do.call(cbind,mc_umis_list)
+colnames(mc_umis) <- colnames(mc@mc_fp)
+mc_umifrac <- mc_umis/rep(colSums(mc_umis),each=nrow(mc_umis))
+
+write.table(
+  mc_umis, file=file.path(scdb_dir, "Nvec_adult_metacell_UMI_counts"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+write.table(
+  mc_umifrac, file=file.path(scdb_dir, "Nvec_adult_metacell_UMI_fractions"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+
+cell_df <- data.table(
+  cell = mc@cell_names[!(mc@cell_names %in% mc@outliers)],
+  metacell = mc@mc
+)
+fwrite(cell_df, file=file.path(scdb_dir, "Nvec_adult_metacell_assignments"), sep="\t")
+
+
+saveRDS(mat@mat[,names(mc@mc)], file=file.path(scdb_dir, "Nvec_adult_sc_UMI_counts.RDS"))
+```
+
+
+# Metacells visualization
+
+```{r mcel_vis_setup}
+mc_id <- "mc_081820"
+mat_id <- "nvec_100"
+mc <- scdb_mc(mc_id)
+mat <- scdb_mat(mat_id)
+
+bkg <- readLines(file.path(annot_dir, "black_list_genes"))
+if (all(!grepl("$Nvec_",bkg)))
+  bkg <- paste0("Nvec_",bkg)
+  
+ann <- fread(file.path(scdb_dir,"Metacell_annotation_081820"))
+setnames(ann,c("metacell","cell_type","color"))
+niche_order <- as.character(ann$metacell)
+niche_color <- ann$color
+# niche_order <- colnames(mc@mc_fp)
+```
+
+2D projection of metacells.
+
+```{r 2d_mc_proj}
+tgconfig::override_params(file.path(scdb_dir,"nvec_v3_metacell_params.yaml"),"metacell")
+mcell_mc2d_force_knn(
+  mc2d_id = sprintf("%s.2dproj",mc_id),
+  mc_id = mc_id, 
+  graph_id = "graphk100"
+)
+mcell_mc2d_plot(mc2d_id=sprintf("%s.2dproj",mc_id))
+```
+
+2D projections separated by input datasets.
+
+```{r}
+tgconfig::set_param(param = "mcell_mc2d_cex", value=1, package="metacell")
+mcell_mc2d_plot_by_factor(
+  mc2d_id = sprintf("%s.2dproj",mc_id),
+  mat_id = mat_id,
+  meta_field = "dataset"
+)
+```
+
+Gene expression heatmaps. 
+
+```{r}
+hms <- scp_plot_cmod_markers(
+  mc_object = mc, mat_object = mat,
+  clust_ord = niche_order, clust_col = niche_color,
+  black_list = c(grep("orphan",rownames(mc@mc_fp),value=TRUE),bkg),
+  output_file=file.path(scdb_fig_dir,sprintf("Gene_expression_%s",mc_id)),
+  width = 4200, height = 18000, plot_sc_width_cex = 5 ,plot_sc_height_cex = 1.5,
+  show_gene_names = TRUE, gene_font_size = 18, gene_chr_limit = 50,
+  mc_font_size = 20, mc_label_cex = 2,
+  gene_annot_file=file.path(annot_dir,"Nvec_annotation_v2_2020-08-18"), 
+  per_clust_genes=20, gene_min_fold=3, transverality_N = round(ncol(mc@mc_fp)/2),
+  plot_sc=FALSE, print_heatmap=FALSE
+)
+```
+```{r single_cell_expression_heatmap}
+bl<-c(grep("orphan",rownames(mc@mc_fp),value=TRUE),bkg)
+scr_plot_cmod_markers(
+  mc_object = mc, mat_object = mat, 
+  output_file=file.path(scdb_fig_dir,sprintf("Gene_expression_scr_%s",mc_id)),
+  gene_annot_file=file.path(annot_dir,"Nvec_annotation_v2_2020-08-18"), 
+  clust_ord=niche_order, clust_col=niche_color, include_peaks = FALSE,
+  per_clust_genes=20, gene_min_fold=2, width=8000, black_list=bl, plot_sc=TRUE
+)
+```
+
+Marker genes heatmaps.  
+
+```{r mc_genes_heatmap}
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, clust_ord = niche_order,
+  markers_file = file.path(annot_dir, "000TF_ANNOTATION_NEW"),
+  #markers_file = file.path(annot_dir, "all_tfs_2020-07-08_groups_Nvec_curated.csv"),
+  heatmap_file = file.path(scdb_fig_dir, sprintf("Nvec_%s_TFs.png",mc_id)),
+  marker_label_cex=3.5, mc_label_cex=4,
+  chisq_threshold=1, T_totumi=10, w=5500, min_gene_fc=1.7, pmin=4
+)
+
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "Nvec_ECM_prots_clean"), 
+  heatmap_file = file.path(scdb_fig_dir,sprintf("Nvec_%s_ECM.png",mc_id)),
+  marker_label_cex=3.5,mc_label_cex=4,
+  chisq_threshold=1, T_totumi=10, w=5500, min_gene_fc=2, pmin=4
+)
+
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_neural_markers"),
+  heatmap_file = file.path(scdb_fig_dir,sprintf("Nvec_%s_neuronal.png",mc_id)),
+  marker_label_cex=3.5,mc_label_cex=4,
+  chisq_threshold=1,T_totumi=10,w=5500,min_gene_fc=1.7,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_synapse"),
+  heatmap_file = file.path(scdb_fig_dir,sprintf("Nvec_%s_synapse.png",mc_id)),
+  marker_label_cex=3,mc_label_cex=4,
+  chisq_threshold=1,T_totumi=10,w=5500,min_gene_fc=1.7,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "Ciliogenesis_markers"),
+  heatmap_file = file.path(scdb_fig_dir,sprintf("Nvec_%s_ciliogenesis.png",mc_id)),
+  marker_label_cex=3.5,mc_label_cex=4,
+  chisq_threshold=1,T_totumi=10,w=5500,min_gene_fc=1.7,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_Cnidocytes"),
+  heatmap_file = file.path(scdb_fig_dir,sprintf("Nvec_%s_cnido.png",mc_id)),
+  marker_label_cex=3.5,mc_label_cex=4,
+  chisq_threshold=1,T_totumi=10,w=5500,min_gene_fc=1.7,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_muscle"),
+  heatmap_file = file.path(scdb_fig_dir,sprintf("Nvec_%s_muscle.png",mc_id)),
+  marker_label_cex=3,mc_label_cex=4,
+  chisq_threshold=1,T_totumi=10,w=5500,min_gene_fc=1.7,pmin=4
+)
+```
+```{r}
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, clust_ord = niche_order,
+  markers_file = file.path(annot_dir, "curated_GPCR_Nvec.csv"),
+  heatmap_file = file.path(scdb_fig_dir, sprintf("Nvec_%s_GPCR.png",mc_id)),
+  marker_label_cex=3.5, mc_label_cex=4,
+  chisq_threshold=1, T_totumi=10, w=5500, min_gene_fc=2, pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, clust_ord = niche_order,
+  markers_file = file.path(annot_dir, "curated_ionchannels_Nvec_SD1.csv"),
+  heatmap_file = file.path(scdb_fig_dir, sprintf("Nvec_%s_ionchannel.png",mc_id)),
+  marker_label_cex=3.5, mc_label_cex=4,
+  chisq_threshold=1, T_totumi=10, w=5500, min_gene_fc=2, pmin=4
+)
+```
+
+Expression of genes in metacells
+
+```{r}
+neuro_genes_1 <- c(
+  "Pou4"="v1g160868","FoxL2"="v1g67043","ZicC zfC2H2"="v1g121215",
+  "Shak1"="v1g21645","SHak4"="v1g189854","Nav2.5"="NVE7349"
+)
+neuro_genes_2 <- c(
+  "OtxC"="v1g213735","SoxC"="v1g131609","Ets"="v1g16815","Islet"="v1g161808","GATA"="v1g196609"
+)
+neuro_genes_3 <- c("Delilah"="v1g39308","Vasopresin"="v1g39308","Shal"="v1g1485","GPCR AMPA"="v1g104623")
+neuro_genes_4 <- c("Nk6"="v1g139174","GABA"="v1g33294","Unclass Sox" ="v1g110350","zfC2H2"="v1g66221")
+gi <- c(neuro_genes_1,neuro_genes_2,neuro_genes_3,neuro_genes_4)
+gin <- paste0("Nvec_",gi)
+names(gin) <- names(gi)
+pdf(file.path(scdb_fig_dir,"neuro_genes_expression.pdf"),width=12,height=5+length(gi)*3,useDingbats=TRUE)
+par(mfrow=c(length(gin),1))
+for (i in 1:length(gin)) {
+print(barplot(
+  mc@mc_fp[gin[i], colnames(mc@mc_fp) %in% ann[grepl("Neuro",cell_type),metacell]],
+  col = ann[grepl("Neuro",cell_type),color],
+  las=2, main=paste(names(gi)[i], gi[i])
+))
+}
+dev.off()
+```
+
+# Cell type mc
+
+```{r ct_mc}
+#source("scr_plot_cmod_markers.R")
+mc_id <- "mc_081820"
+mat_id <- "nvec_100"
+mat <- scdb_mat(mat_id)
+mc <- scdb_mc(mc_id)
+ann_file <- file.path(scdb_dir,"Nvec_adult_metacell_annotation")
+ann <- fread(ann_file)
+
+# calculate mc object with mc_fp by cell type
+mc_ct <- scr_cell_type_fp(
+  input_table = ann_file,
+  mc_object = mc,
+  mat_object = mat
+)
+scdb_add_mc(id="ct_081820",mc_ct)
+
+# save footprint
+write.table(
+  mc_ct@mc_fp, file=file.path(scdb_dir, "Nvec_adult_cell_type_gene_FC"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+
+# save mock ann
+ann[,metacell:=cell_type]
+# fwrite(unique(ann),file.path(scdb_dir,"Nvec_adult_cell_type_annotation"),sep="\t")
+
+# counts
+ct_umis_list <- lapply(colnames(mc_ct@mc_fp), function(y) {
+  x <- ann[cell_type==y,]$metacell
+  cells <- names(mc_ct@mc)[mc_ct@mc%in%x]
+  Matrix::rowSums(mat@mat[,cells])
+})
+ct_umis <- do.call(cbind,ct_umis_list)
+colnames(ct_umis) <- colnames(mc_ct@mc_fp)
+ct_umifrac <- ct_umis/rep(colSums(ct_umis),each=nrow(ct_umis))
+
+write.table(
+  ct_umis, file=file.path(scdb_dir, "Nvec_adult_cell_type_UMI_counts"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+write.table(
+  ct_umifrac, file=file.path(scdb_dir, "Nvec_adult_cell_type_UMI_fractions"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+
+cell_df <- data.table(
+  cell = mc_ct@cell_names[!(mc_ct@cell_names %in% mc@outliers)],
+  cell_type = mc_ct@mc
+)
+fwrite(cell_df, file=file.path(scdb_dir, "Nvec_adult_cell_type_assignments"), sep="\t")
+
+```
+
+# Broad cell type mc
+
+```{r ct_mc}
+#source("scr_plot_cmod_markers.R")
+mc_id <- "ct_081820"
+mat_id <- "nvec_100"
+mat <- scdb_mat(mat_id)
+mc <- scdb_mc(mc_id)
+ann_file <- file.path(scdb_dir,"Nvec_adult_broad_cell_type_annotation")
+ann <- fread(ann_file)
+
+# calculate mc object with mc_fp by cell type
+mc_ct <- scr_cell_type_fp(
+  input_table = ann_file,
+  mc_object = mc,
+  mat_object = mat
+)
+scdb_add_mc(id="bct_081820",mc_ct)
+
+# save footprint
+write.table(
+  mc_ct@mc_fp, file=file.path(scdb_dir, "Nvec_adult_broad_cell_type_gene_FC"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+
+# save mock ann
+ann[,metacell:=cell_type]
+# fwrite(unique(ann),file.path(scdb_dir,"Nvec_adult_cell_type_annotation"),sep="\t")
+
+# counts
+ct_umis_list <- lapply(colnames(mc_ct@mc_fp), function(y) {
+  x <- ann[cell_type==y,]$metacell
+  cells <- names(mc_ct@mc)[mc_ct@mc%in%x]
+  Matrix::rowSums(mat@mat[,cells])
+})
+ct_umis <- do.call(cbind,ct_umis_list)
+colnames(ct_umis) <- colnames(mc_ct@mc_fp)
+ct_umifrac <- ct_umis/rep(colSums(ct_umis),each=nrow(ct_umis))
+
+write.table(
+  ct_umis, file=file.path(scdb_dir, "Nvec_adult_broad_cell_type_UMI_counts"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+write.table(
+  ct_umifrac, file=file.path(scdb_dir, "Nvec_adult_broad_cell_type_UMI_fractions"), 
+  sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
+)
+
+cell_df <- data.table(
+  cell = mc_ct@cell_names[!(mc_ct@cell_names %in% mc@outliers)],
+  cell_type = mc_ct@mc
+)
+fwrite(cell_df, file=file.path(scdb_dir, "Nvec_adult_broad_cell_type_assignments"), sep="\t")
+
+```
+
+# Sequencing and clustering statistics
+
+```{r}
+cells_final <- fread(file.path(scdb_dir,"Nvec_adult_broad_cell_type_assignments"))[[1]]
+wells_cells <- fread("/users/asebe/asebe/proj/scRNA_nvec_v3/scdb_v3/annotations/wells_cells.txt")
+batch_table <- fread("/users/asebe/asebe/proj/scRNA_nvec_v3/scdb_v3/annotations/amp_batches.txt")
+files=list.files("/users/asebe/asebe/proj/scRNA_nvec_v3/scdb_v3/output_good/QC/read_stats/",pattern="*.txt",full.names=T)
+umi_files=list.files(path="/users/asebe/asebe/proj/scRNA_nvec_v3/scdb_v3/output_good/umi.tab/",pattern="*.txt",full.names=T)
+cell_Tumis_list <- lapply(umi_files, function(f) { 
+  ff=fread(f, header=TRUE)[,-1:2]
+  colSums(as.matrix(ff))
+})
+cell_Tumis <- do.call('cbind',cell_Tumis_list)
+cell_Tumis <- as.data.table(cell_Tumis,keep.rownames="well_id")[match(cells_final,well_id)]
+# mapping stats per cell
+cell_stats <- rbindlist(lapply(files, fread))
+cell_stats <- cell_stats[well_id %in% wells_cells$Well_ID]
+cols <- c("mapped_to_nongenic", grep("gene",colnames(cell_Treads),value=TRUE))
+other_mapped <- rowSums(cell_stats[,..cols])
+cell_stats[,total_mapped:=cell_stats$gene_mapped+other_mapped]
+fcols <- c("well_id", "total","total_mapped","gene_mapped")
+cell_Treads <- cell_stats[match(cells_final,well_id),..fcols]
+dt <- merge.data.table(cell_Tumis,cell_Treads,by="well_id")
+dt[,cells_reads_umi:=total_mapped/cell_Tumis]
+setnames(dt,
+  c("well_id","cell_Tumis","total","total_mapped","cells_reads_umi"),
+  c("cell","UMI_per_cell","total_reads_per_cell","mapped_reads_per_cell","mapped_reads_per_UMI")
+)
+fwrite(dt,file.path(scdb_dir,"stats_cells.tsv"),sep='\t')
+dtmed <- dt[,lapply(.SD, median),.SDcols=colnames(dt)[-1]]
+dtmed[,':='(dataset="Nvec_v3",cells=nrow(dt))]
+setcolorder(dtmed,c("dataset","cells"))
+fwrite(dtmed,file.path(scdb_dir,"stats.tsv"),sep='\t')
+```
+
+# Appendix
+## PCA 
+
+Select variable genes for PCA (very inclusive)
+
+```{r}
+morange <- rownames(mat@mat)[grepl("mOrange",rownames(mat@mat))] 
+bkg <- readLines("annotation/black_list_genes")
+mcell_gset_filter_multi(
+  gstat_id = "gstat",
+  gset_id = "var_genes",
+  T_tot = 20, T_top3 = 2, T_szcor = 10000, T_niche = 0, 
+  blacklist = c(morange,bkg), force_new=TRUE
+)
+var_genes_gset <- scdb_gset(id="var_genes")
+var_genes <- names(var_genes_gset@gene_set)
+# 6478
+```
+
+## Manual metacell solution
+
+### Save manual solution
+
+```{r mcel_man_vis_setup}
+scdb_dir <- "metacell05"
+scdb_fig_dir <- file.path(scdb_dir,"figs")
+scdb_init(scdb_dir, force_reinit = TRUE)
+scfigs_init(scdb_fig_dir)
+mc_id <- "mc_filt"
+mat_id <- "nvec_adult_filt"
+mc <- scdb_mc(mc_id)
+mat <- scdb_mat(mat_id)
+```
+
+Load manual annotations.  
+
+```{r load_manual_annot}
+mc_annotation_file <- file.path(scdb_dir, "Adult_metacell_annotation_manual")
+mc_annotation <- fread(mc_annotation_file, sep="\t")
+mc_cols <- mc_annotation$col
+niche_order <- mc_annotation$mc
+niche_order <- as.character(niche_order)
+```
+
+Plot heatmap.
+
+```{r}
+mcell_mc2d_plot(mc2d_id=sprintf("%s.2dproj",mc_id))
+scr_plot_cmod_markers2(
+  mc_object = mc, mat_object = mat, print_heatmap = TRUE,
+  clust_ord = niche_order, clust_col = mc_cols,
+  output_file = NULL, #file.path(scdb_fig_dir,sprintf("%s.manual.png",mc_id)), 
+  plot_sc = FALSE,
+  per_clust_genes = 20, height = 4000, width = 6000, 
+  gene_min_fold = 2, show_gene_names = TRUE, gene_font_size = 4
+)
+```
+
+Update mc objects after manual reordering and/or killing of metacells.  
+
+```{r scdb_annot_update}
+# remove outliers
+# out_mc <- c()
+# mc <- mc_set_outlier_mc(mc=mc, mc_ids=out_mc)
+# mc_filt <- mc_update_stats(mc=mc, scmat=mat)
+mc_filt <- mc
+
+# reorder metacells (mc_update_stats renames them to go from 1 to end, without gaps for removed mcs!)
+niche_order_new <- niche_order
+# for (i in sort(out_mc)) {
+#   id_changed <- niche_order>i
+#   niche_order_new[id_changed] <- niche_order_new[id_changed]-1
+# }
+mc_filt_ord <- mc_reorder(mc=mc_filt, ord=niche_order_new)
+
+# update colours
+# colours are perserved when names change
+
+# add new mc object to db
+# the mcs are now ordered and coloured by celltype and assigned names 1:ncol(mc_fp)
+# I find this inconsistency in annotations (i.e. names instead of values) annoying
+# therefore I change it manually
+mc_filt_ord@annots <- as.integer(names(mc_filt_ord@annots))
+scdb_add_mc(id="mc_filt_ord", mc=mc_filt_ord)
+
+# add filtered UMI matrix to db
+mc_filt_ord_meta <- cbind(mc_filt_ord@mc)
+rownames(mc_filt_ord_meta) <- names(mc_filt_ord@mc)
+mat_filt_ord <- scm_new_matrix(
+  mat=data.matrix(mat@mat[,names(mc_filt_ord@mc)]), 
+  cell_metadata=mat@cell_metadata[names(mc_filt_ord@mc),], 
+  stat_type="umi"
+)
+scdb_add_mat(id="mat_filt_ord", mat=mat_filt_ord)
+
+# save annotation text files
+mc_annotation_new <- data.table(
+  metacell=names(mc_filt_ord@colors),
+  color=mc_filt_ord@colors
+)
+setnames(mc_annotation,c("metacell","cell_type","color"))
+mc_annotation_new[mc_annotation, on="color", "cell_type":=i.cell_type]
+setcolorder(mc_annotation_new,c("metacell","cell_type","color"))
+fwrite(mc_annotation_new, file.path(scdb_dir,"Adult_metacell_annotation_filt_ord.tsv"),sep="\t")
+
+mc_cell_info <- data.table(
+    cell=mc_filt_ord@cell_names[!(mc_filt_ord@cell_names %in% mc_filt_ord@outliers)],
+    metacell=mc_filt_ord@mc
+)
+mc_cell_info <- mc_cell_info[mc_annotation, on="metacell"]
+fwrite(mc_cell_info, file.path(scdb_dir, "Adult_cell_annotation_filt_ord.tsv"),sep="\t")
+```
+
+### Load manual solution
+
+Load the final metacell solution.
+
+```{r final_mc_solution}  
+mc <- scdb_mc("mc_filt_ord")
+mat <- scdb_mat("mat_filt_ord")
+
+mc_annotation_file <- file.path(scdb_dir, "Adult_metacell_annotation_filt_ord.tsv")
+mc_annotation <- fread(mc_annotation_file, sep="\t")
+mc_cols <- mc_annotation$col
+names(mc_cols) <- mc_annotation$metacell
+niche_order <- mc_annotation$metacell
+
+# write.table(mc@mc_fp, file = file.path(scdb_dir,"mc_fp.txt"), sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
+# umifrac_per_mc <- scr_gen_niche_counts(sc_object = mc, mat_object = mat, niche_order = niche_order)
+# write.table(umifrac_per_mc, file = file.path(scdb_dir,"umifrac_per_mc.txt"), sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
+# write.table(scr_niche_counts, file = file.path(scdb_dir,"umicount_per_mc.txt"), sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
+```
+
+Now I can redo the figures (go to `mcel_vis_setup` chunk).
+
+### Final metacells visualization
+
+```{r mcel_final_vis_setup}
+scdb_dir <- "metacell05"
+scdb_fig_dir <- file.path(scdb_dir,"fig_final")
+dir.create(scdb_fig_dir)
+
+scdb_init(scdb_dir, force_reinit = TRUE)
+scfigs_init(scdb_fig_dir)
+
+mc_id <- "mc_filt_ord"
+mat_id <- "mat_filt_ord"
+mc <- scdb_mc(mc_id)
+mat <- scdb_mat(mat_id)
+```
+
+2D projection of metacells.
+
+```{r 2d_mc_proj_final}
+tgconfig::override_params(file.path(scdb_dir,"nvec_v3_metacell_params.yaml"),"metacell")
+mcell_mc2d_force_knn(
+  mc2d_id = sprintf("%s.2dproj",mc_id),
+  mc_id = mc_id, 
+  graph_id = "graphk100"
+)
+mcell_mc2d_plot(mc2d_id=sprintf("%s.2dproj",mc_id))
+```
+
+Gene expression heatmaps.
+
+```{r mc_genes_heatmap_final}
+mcan <- fread(file.path(scdb_dir,"Adult_metacell_annotation_manual"))
+cts <- unique(mcan$cell_type)
+mcan[,cell_type:=factor(cell_type,levels=cts)]
+setorder(mcan,cell_type)
+niche_order <- mcan$mc
+niche_colours <- mcan$color
+
+mcell_gset_from_mc_markers(gset_id = "kaka", mc_id = mc_id, filt_gset_id = "clust_markers")
+mcell_mc_plot_marks(
+  mc_id=mc_id, gset_id="kaka", mat_id=mat_id,
+  plot_cells=TRUE, mc_ord=niche_order
+)
+```
+
+Marker genes heatmaps.  
+
+```{r}
+morange <- rownames(mat@mat)[grepl("mOrange",rownames(mat@mat))] 
+bkg <- readLines("annotation/black_list_genes")
+scr_plot_cmod_markers(
+  mc_object = mc, mat_object = mat, clust_ord = niche_order,
+  output_file= file.path(scdb_fig_dir, "Global_gene_expression.png"),
+  gene_annot_file= file.path(annot_dir, "000Nvec_master_annotation_reduced.txt"),
+  per_clust_genes=30, height=12000, width=6000, gene_min_fold=2, plot_sc=TRUE, 
+  black_list=c(bkg,morange), add_lateral_genes=TRUE, include_peaks=FALSE
+)
+
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, clust_ord = niche_order,
+  markers_file = file.path(annot_dir, "000TF_ANNOTATION_NEW"),
+  heatmap_file= file.path(scdb_fig_dir, "Nvec_TFs.png"),
+  chisq_threshold=1, T_totumi=10, w=4500, min_gene_fc=1.7, pmin=4
+)
+
+scr_tf_tf_cor_footprint(
+  mc_object = mc, mat_object = mat, 
+  tf_file = file.path(annot_dir, "000TF_ANNOTATION_NEW"), 
+  output_file = file.path(scdb_fig_dir,"TF_modules.png"),
+  nmodules=10, min_fc=1.8, T_totumi=10, fuse_modules2=TRUE
+)
+
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "Nvec_ECM_prots_clean"), 
+  heatmap_file = file.path(scdb_fig_dir,"Nvec_ECM.png"),
+  chisq_threshold=1, T_totumi=10, w=4500, min_gene_fc=2, pmin=4
+)
+
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_neural_markers"),
+  heatmap_file = file.path(scdb_fig_dir,"Nvec_neuronal.png"),
+  chisq_threshold=1,T_totumi=10,w=4500,min_gene_fc=2,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "Ciliogenesis_markers"),
+  heatmap_file = file.path(scdb_fig_dir,"Nvec_flagellum.png"),
+  chisq_threshold=1,T_totumi=10,w=4500,min_gene_fc=2,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_Cnidocytes"),
+  heatmap_file = file.path(scdb_fig_dir,"Nvec_cnido.png"),
+  chisq_threshold=1,T_totumi=10,w=4500,min_gene_fc=1.8,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_synapse"),
+  heatmap_file = file.path(scdb_fig_dir,"Nvec_synapsis.png"),
+  chisq_threshold=1,T_totumi=10,w=4500,min_gene_fc=1.8,pmin=4
+)
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path(annot_dir, "FINAL_muscle"),
+  heatmap_file = file.path(scdb_fig_dir,"Nvec_muscle.png"),
+  chisq_threshold=1,T_totumi=10,w=4500,min_gene_fc=1.8,pmin=4
+)
+
+```
+
+Barplot of marker genes.  
+
+```{r mc_barplot_markers}
+scr_barplot_heatmap_markers(
+  mc_object = mc, mat_object = mat, 
+  markers_file = file.path("annotation","Nematostella_TF_annotation"), sort_markers=TRUE,
+  heatmap_file = file.path(scdb_fig_dir, "barplot_filt_ord_heatmap_markers.png"), 
+  print_barplots=FALSE, barplot_dir = scdb_fig_dir, 
+  col = niche_colours, clust_order = niche_order, w = 8000
+)
+#col = c("plum3",niche_colours), clust_order = c(102,niche_order), w = 8000
+scr_plot_cmod_markers_ct_colors(
+  mc_object = mc, mat_object = mat,
+  output_file = file.path(scdb_fig_dir, "plot_filt_cmod_markers.png"), height=10000, width=6000,
+  gene_annot_file = file.path("annotation","Nematostella_TF_annotation"),
+  sn_table = file.path(scdb_dir, "Adult_metacell_annotation_filt_ord.tsv"),
+  clust_ord = niche_order
+)
+scr_plot_cmod_markers(
+  mc_object = mc, mat_object = mat, 
+  output_file = file.path(scdb_fig_dir, "plot_filt_ct_cmod_markers.png"), height=10000, width=5000,
+  gene_annot_file = file.path("annotation","Nematostella_gene_annotation"), 
+  clust_ord = niche_order, clust_col = niche_colours, show_gene_names = TRUE
+)
+```
+
+Normalized log fold change of expression.
+
+```{r norm_log_expression_heatmap}
+#niche_order <- colnames(mc@mc_fp)
+#mc_cols <- mc@colors
+
+scr_plot_cmod_markers(
+  mc_object = mc, mat_object = mat, gene_annot_file = "annotation/Nematostella_gene_annotation",
+  clust_ord=niche_order, clust_col=niche_colours,
+  output_file=file.path(scdb_fig_dir,"plot_cmod_markers.png"), plot_sc = FALSE,
+  per_clust_genes=20, height=2000, gene_min_fold=2
+)
+```
+
+# Session info
+
+```{r session, eval=TRUE}
+sessionInfo()
+```

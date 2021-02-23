@@ -1,0 +1,17 @@
+*.R
+*.Rprofile
+*.Rhistory
+*umi.tab
+*MARS_Batches*
+*backup*
+GEO
+clustering*/scdb/figs
+clustering*/scdb/*cells_UMI_counts
+clustering*/scdb/*sc_UMI_counts
+**/*Rda
+**/*RDS
+**/*csv
+**/*tsv
+saturation
+clustering_DS
+annotation/orthologous_pairs.txt

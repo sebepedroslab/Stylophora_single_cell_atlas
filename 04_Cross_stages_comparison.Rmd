@@ -1,0 +1,243 @@
+---
+title: "04. Stylophora cross-stages comparison"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+auhor: "Anamaria Elek"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: false
+    toc_depth: 2
+---
+```{r options, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE, fig.align = 'center')
+```
+
+# Set up the analysis
+
+Load required packages and functions.
+
+```{r setup, eval=TRUE, message=FALSE, warning=FALSE}
+library(data.table)
+library(stringr)
+library(ape)
+library(tidytree)
+library(ggtree)
+library(treeio)
+library(dendextend)
+library(phangorn)
+library(phytools)
+library(ggplot2)
+theme_py <- theme_classic() + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_rect(colour = "black", fill = NA),
+  text = element_text(size=20)
+)
+theme_set(theme_py)
+# load functions for downstream analysis
+scripts <- list.files("metacell_downstream_functions",full.names=TRUE)
+for (file in scripts) source(file)
+```
+
+# Cell type tree
+
+```{r}
+outdir <- "cross_stages/tree"
+dir.create(outdir, showWarnings=FALSE)
+```
+
+Load previously generated metacell expression data summarized at cell type level.
+
+```{r ct}
+adult_mcfp <- read.table("clustering_coral/scdb/Spis_coral_cell_type_gene_FC")
+colnames(adult_mcfp) <- str_replace(colnames(adult_mcfp),"\\.","-")
+adult_annot_file <-"clustering_coral/scdb/Spis_coral_cell_type_annotation"
+adult_annot <- fread(adult_annot_file)
+adult_mcfp <- adult_mcfp[,adult_annot$cell_type]
+
+larva_mcfp <- read.table("clustering_larva/scdb/Spis_larva_cell_type_gene_FC")
+larva_annot_file <-"clustering_larva/scdb/Spis_larva_cell_type_annotation"
+larva_annot <- fread(larva_annot_file)
+larva_mcfp <- larva_mcfp[,larva_annot$cell_type]
+
+polyp_mcfp <- read.table("clustering_polyp/scdb/Spis_polyp_cell_type_gene_FC")
+polyp_annot_file <-"clustering_polyp/scdb/Spis_polyp_cell_type_annotation"
+polyp_annot <- fread(polyp_annot_file)
+polyp_mcfp <- polyp_mcfp[,polyp_annot$cell_type]
+```
+
+Combine cell type annotations.
+
+```{r ct_anns, eval=TRUE}
+ct_annot1=read.table("clustering_coral/scdb/Spis_coral_cell_type_annotation",header=TRUE,stringsAsFactors=FALSE)
+ct_annot2=read.table("clustering_polyp/scdb/Spis_polyp_cell_type_annotation",header=TRUE,stringsAsFactors=FALSE)
+ct_annot3=read.table("clustering_larva/scdb/Spis_larva_cell_type_annotation",header=TRUE,stringsAsFactors=FALSE)
+ct_ann_dt <- rbindlist(list(Adult=ct_annot1,Polyp=ct_annot2,Larva=ct_annot3),idcol="sp")
+ct_ann_dt[,metacell:=paste(sp,metacell,sep="_")]
+ct_ann_dt[,cell_type:=paste(sp,cell_type,sep="_")]
+ct_ann_dt[,c("sp"):=NULL]
+ctcol=c(ct_annot1$color,ct_annot2$color,ct_annot3$color)
+names(ctcol)=c(
+  paste0("Adult_",ct_annot1$cell_type),
+  paste0("Polyp_",ct_annot2$cell_type),
+  paste0("Larva_",ct_annot3$cell_type)
+)
+fwrite(ct_ann_dt,file.path(outdir,"Spis_all_stages_cell_type_annotation"),sep="\t")
+```
+
+Combine expression data for stages. To avoid loosing stage-specific variable genes, we assign them value 1 in datasets in which they are missing.
+
+```{r combine_all, eval=FALSE}
+all_genes <- unique(c(rownames(adult_mcfp), rownames(polyp_mcfp), rownames(larva_mcfp))) # 31398
+add_missing <- function(mcfp,all_genes) {
+  missing <- setdiff(all_genes,rownames(mcfp))
+  addition <- matrix(1,nrow=length(missing),ncol=ncol(mcfp))
+  rownames(addition) <- missing
+  colnames(addition) <- colnames(mcfp)
+  rbind(mcfp,addition)[all_genes,]
+}
+adult_mat <- add_missing(adult_mcfp,all_genes)
+colnames(adult_mat) <- paste0("Adult_", colnames(adult_mat))
+polyp_mat <- add_missing(polyp_mcfp,all_genes)
+colnames(polyp_mat) <- paste0("Polyp_",colnames(polyp_mat))
+larva_mat <- add_missing(larva_mcfp,all_genes)
+colnames(larva_mat) <- paste0("Larva_",colnames(larva_mat))
+mc_fp <- as.matrix(cbind(cbind(adult_mat, polyp_mat), larva_mat))
+write.table(mc_fp,file.path(outdir,"Spis_all_stages_gene_FC.tsv"))
+```
+
+Define variable genes.
+
+```{r var_genes, eval=TRUE}
+mc_fp <- read.table(file.path(outdir,"Spis_all_stages_gene_FC.tsv"))
+colnames(mc_fp) <- str_replace(colnames(mc_fp),"\\.","-")
+var_genes_fc <- 1.8 
+var_genes <- names(which(apply(mc_fp,1,function(x) sort(x,decreasing=T)[2])>var_genes_fc)) # 5881
+```
+
+There are `r length(var_genes)` variable genes in the three datasets. We use these genes for hierarchical clustering and building the cell type tree.  
+Now we build cell type trees and generate the final tree from the co-occurence matrix.
+
+```{r cooccur_tree, eval=FALSE}
+# Co-occurence tree
+set.seed(4343)
+h <- c(0.75,0.95)
+p <- 0.75 
+clustering_algorithm <- "hclust"
+clustering_method <- "average"
+cor_method <- "pearson"
+treename <- sprintf(
+  "cross_stages_ct_vargenes%s_cooc%sp%s%sh%s",
+  var_genes_fc,clustering_method,p,clustering_algorithm,paste(h,collapse=",")
+)
+tree_vargenes_cooc <- treeFromEnsembleClustering(
+  x=mc_fp, vargenes=var_genes, p=p, h=h,  bootstrap=FALSE,
+  clustering_algorithm=clustering_algorithm, clustering_method=clustering_method, 
+  cor_method=cor_method
+)
+tree_rds <- file.path(outdir,sprintf("%s.RDS",treename))
+tree <- tree_vargenes_cooc$tree
+saveRDS(tree,tree_rds)
+saveTreeFiles(
+  tree_rds, ctcol=ctcol, out_dir = outdir, save_nexus = TRUE, scale_branches = FALSE,
+  width_tree = 10, height_tree = 24, width_polytree = 10, height_polytree = 22
+)
+
+# Co-occurrence matrix
+col=colorRamp2(
+  c(0,100,200,400,600,700,800,900,1000),
+  colors=c(c("white",'#ffffe5','#fff7bc','#fee391','#fec44f','#fe9929','#ec7014','#cc4c02','#990000'))
+)
+plotTreeMatrix(
+  mat = tree_vargenes_cooc$cooccurrence, tree = tree, ctcol=ctcol, hmapcol = col,
+  name="co-occurence", out_name = file.path(outdir, sprintf("matrix_%s.pdf",treename)),
+  width = 20, height = 20
+)
+      
+```
+
+We reorder the tree nodes externally (FigTree), load it back to R to save nexus file with colors and RDS file.
+
+```{r eval=FALSE, fig.height=18}
+tree_file=file.path(outdir,"cell_type_tree_vargenes1.8_coocaveragep0.75hclusth0.75,0.95_politomies0.10.beast")
+tree <- as.phylo(read.beast(tree_file)); plot(tree,tip.color=ctcol[tree$tip.label])
+treeColorTips(
+  tree_file=tree_file, ctcol=ctcol,
+  out_file=file.path(outdir,"cell_type_tree_vargenes1.8_coocaveragep0.75hclusth0.75,0.95_politomies0.10.beast")
+)
+saveRDS(tree,str_replace(tree_file,"beast","RDS"))
+```
+
+Also reorder co-occurance matrix by final tip ordering.
+
+```{r}
+plotTreeMatrix(
+  mat = tree_vargenes_cooc$cooccurrence, tree = tree, build_tree=FALSE, rev=FALSE,
+  ctcol=ctcol, hmapcol = col, name="co-occurence", 
+  out_name = str_replace_all(tree_file,c("cell_type"="matrix_cell_type","beast"="pdf")),
+  width = 12, height = 12, row_names_side = "left"
+)
+```
+
+# Gap genes
+
+Accessing internal tree nodes to find feature (gap) genes. This is `scripts/gapgenes.R` script, submitted to HPC using `gapgenes.sh` submission script.
+
+The reults can be interactively explored in the [shiny app](https://sebe-lab.shinyapps.io/Stylophora_cell_type_tree).
+
+# GO enrichment
+We compare calicoblast genes in adult and polyp, as well as gastrodermis and symbiodinium hosting cells, using GO enrichment.
+
+```{r warning=FALSE, message=FALSE}
+source("scripts/topGO.R")
+gomap <- readRDS("annotation/gomap_spis.RDS")
+tgalg <- "classic"
+godir <- file.path("cross_stages","go",tgalg); dir.create(godir,recursive=TRUE,showWarnings=FALSE)
+
+# gene lists of genes upregulated in calicoblasts, and in gastrodermis with and without symbiodinum
+gls_files <- list.files("cross_stages/genelists/",pattern=".*txt",full.names=TRUE)
+names(gls_files) <- str_remove(basename(gls_files),"\\.txt")
+cts <- names(gls_files)
+
+# calculate GO enrichment
+godt <- rbindlist(sapply(names(gls_files), function(ct) {
+  list_interest <- fread(gls_files[ct],header=FALSE)[[1]]
+  setDT(topgofun(
+    list_interest, gomap, tg_algorithm=tgalg, output_name=file.path(godir,sprintf("go.%s",ct)),
+    name_geneset=ct, ontology_set=c("MF","CC","BP"), firstSigNodes=20
+  ))
+}, USE.NAMES=TRUE, simplify=FALSE), idcol="group")
+fwrite(godt,file.path(godir,sprintf("topGO.%s.tsv",tgalg)),sep="\t")
+
+# select significant results
+sign_go <- godt[,.SD[order(pval_adj,decreasing=FALSE)][pval_adj<0.05],group]
+sign_go[,xid:=sprintf("%s:%s",GO.ID,Term)]
+sign_go[,logpadj:=-1*log10(pval_adj)]
+
+for (ct in cts) {
+  godt <- sign_go[group==ct]
+  setorder(godt,"Significant","pval_adj")
+  godt[,xid:=factor(xid,levels=unique(xid))]
+  if (nrow(godt)>0) {
+    gp <- ggplot(godt, aes(xid, Significant, fill=pval_adj)) +
+      geom_bar(stat="identity") + coord_flip() + 
+      facet_grid(ontology~.,scales="free_y",space="free_y",drop=TRUE) +
+      scale_y_continuous(expand = c(0,0)) +
+      scale_fill_gradient(limits = c(0,0.05), low=grey.colors(3)[2], high=grey.colors(3)[1], breaks=c(0,0.05)) +
+      labs(x="", y="significant genes", fill="adjusted\np value") + 
+      theme(strip.background=element_blank())
+    # awful helper function to try estimating plot dimensions
+    .plotdims <- function(x) {
+      if (x<6) {c(3,10)} else if (x<11) {c(10, 16)} else if (x<21) {c(12,15)} else if (x<41) {c(14,14)} else if (x<51) {c(16,13)} else if (x<100) {c(40,14)} else if (x<400) {c(60,15)} else if (x<600) {c(80,14)} else {c(100,14)}
+    }
+    dims <- .plotdims(nrow(godt))
+    ph = dims[1]; pw = dims[2]
+    pdf(file.path(godir,sprintf("go%s_plot_%s.pdf",tgalg,ct)),height=ph,width=pw,useDingbats=TRUE)
+    print(gp)
+    dev.off()
+  }
+}
+```
+

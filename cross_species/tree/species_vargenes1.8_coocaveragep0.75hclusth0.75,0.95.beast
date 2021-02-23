@@ -1,0 +1,85 @@
+#NEXUS
+[R-package treeio, Sun Feb 21 18:41:39 2021]
+
+BEGIN TAXA;
+	DIMENSIONS NTAX = 36;
+	TAXLABELS
+		Spis_alga-hosting_cells[&!color=#32CD32]
+		Spis_calicoblast[&!color=#7D26CD]
+		Spis_cnidocyte[&!color=#CD96CD]
+		Spis_digestive_filaments[&!color=#CD2626]
+		Spis_epidermis[&!color=#00C5CD]
+		Spis_gastrodermis[&!color=#76EE00]
+		Spis_germline[&!color=#7A378B]
+		Spis_gland[&!color=#FFA500]
+		Spis_immune[&!color=#CDC673]
+		Spis_mitotic_host_cells[&!color=#EEC591]
+		Spis_neuron[&!color=#87CEEB]
+		Spis_unknown[&!color=#707070]
+		Nvec_cnidocyte[&!color=#CD96CD]
+		Nvec_digestive_filaments[&!color=#CD2626]
+		Nvec_epidermis[&!color=#00C5CD]
+		Nvec_gastrodermis[&!color=#458B00]
+		Nvec_gland[&!color=#FFA500]
+		Nvec_muscle[&!color=#FFD700]
+		Nvec_neuron[&!color=#87CEEB]
+		Nvec_precursors[&!color=#BEBEBE]
+		Xesp_cnidocyte[&!color=#CD96CD]
+		Xesp_digestive_filaments[&!color=#CD2626]
+		Xesp_epidermis[&!color=#00C5CD]
+		Xesp_gastrodermis[&!color=#458B00]
+		Xesp_gland[&!color=#FFA500]
+		Xesp_host_cells[&!color=#32CD32]
+		Xesp_muscle[&!color=#FFD700]
+		Xesp_neuron[&!color=#87CEEB]
+		Xesp_precursors[&!color=#BEBEBE]
+		Hvul_cnidocyte[&!color=#CD96CD]
+		Hvul_epidermis[&!color=#00C5CD]
+		Hvul_gastrodermis[&!color=#458B00]
+		Hvul_germline[&!color=#7A378B]
+		Hvul_gland[&!color=#FFA500]
+		Hvul_neuron[&!color=#87CEEB]
+		Hvul_precursors[&!color=#BEBEBE]
+	;
+END;
+BEGIN TREES;
+	TRANSLATE
+		1	Spis_alga-hosting_cells[&!color=#32CD32],
+		2	Spis_calicoblast[&!color=#7D26CD],
+		3	Spis_cnidocyte[&!color=#CD96CD],
+		4	Spis_digestive_filaments[&!color=#CD2626],
+		5	Spis_epidermis[&!color=#00C5CD],
+		6	Spis_gastrodermis[&!color=#76EE00],
+		7	Spis_germline[&!color=#7A378B],
+		8	Spis_gland[&!color=#FFA500],
+		9	Spis_immune[&!color=#CDC673],
+		10	Spis_mitotic_host_cells[&!color=#EEC591],
+		11	Spis_neuron[&!color=#87CEEB],
+		12	Spis_unknown[&!color=#707070],
+		13	Nvec_cnidocyte[&!color=#CD96CD],
+		14	Nvec_digestive_filaments[&!color=#CD2626],
+		15	Nvec_epidermis[&!color=#00C5CD],
+		16	Nvec_gastrodermis[&!color=#458B00],
+		17	Nvec_gland[&!color=#FFA500],
+		18	Nvec_muscle[&!color=#FFD700],
+		19	Nvec_neuron[&!color=#87CEEB],
+		20	Nvec_precursors[&!color=#BEBEBE],
+		21	Xesp_cnidocyte[&!color=#CD96CD],
+		22	Xesp_digestive_filaments[&!color=#CD2626],
+		23	Xesp_epidermis[&!color=#00C5CD],
+		24	Xesp_gastrodermis[&!color=#458B00],
+		25	Xesp_gland[&!color=#FFA500],
+		26	Xesp_host_cells[&!color=#32CD32],
+		27	Xesp_muscle[&!color=#FFD700],
+		28	Xesp_neuron[&!color=#87CEEB],
+		29	Xesp_precursors[&!color=#BEBEBE],
+		30	Hvul_cnidocyte[&!color=#CD96CD],
+		31	Hvul_epidermis[&!color=#00C5CD],
+		32	Hvul_gastrodermis[&!color=#458B00],
+		33	Hvul_germline[&!color=#7A378B],
+		34	Hvul_gland[&!color=#FFA500],
+		35	Hvul_neuron[&!color=#87CEEB],
+		36	Hvul_precursors[&!color=#BEBEBE]
+	;
+	TREE * UNTITLED = [&R] ((((8[&color=#FFA500]:0,17[&color=#FFA500]:0)[&support=758]:231.8707131,(25[&color=#FFA500]:178.4957983,34[&color=#FFA500]:178.4957983)[&support=136]:53.37491487)[&support=588]:265.0711166,(35[&color=#87CEEB]:402.8862365,(19[&color=#87CEEB]:11.43659632,(11[&color=#87CEEB]:5.590169944,28[&color=#87CEEB]:5.590169944)[&support=695]:5.846426377)[&support=423]:391.4496402)[&support=559]:94.05559329)[&support=744]:806.1809297,(((18[&color=#FFD700]:385.8613741,27[&color=#FFD700]:385.8613741)[&support=729]:193.4525071,(((6[&color=#76EE00]:2.121320344,16[&color=#458B00]:2.121320344)[&support=818]:174.1831618,(1[&color=#32CD32]:116.1260091,32[&color=#458B00]:116.1260091)[&support=396]:60.17847301)[&support=466]:230.1322641,(24[&color=#458B00]:243.1501594,26[&color=#32CD32]:243.1501594)[&support=560]:163.2865869)[&support=676]:172.8771349)[&support=586]:608.2815349,((30[&color=#CD96CD]:239.6789519,(21[&color=#CD96CD]:0,(3[&color=#CD96CD]:0,13[&color=#CD96CD]:0):0)[&support=1000]:239.6789519)[&support=668]:905.3841016,(((20[&color=#BEBEBE]:0,29[&color=#BEBEBE]:0)[&support=958]:615.8969059,(7[&color=#7A378B]:534.268659,(33[&color=#7A378B]:0,36[&color=#BEBEBE]:0)[&support=940]:534.268659)[&support=452]:81.6282469)[&support=372]:380.0799718,((4[&color=#CD2626]:272.7341293,(14[&color=#CD2626]:91.13177272,22[&color=#CD2626]:91.13177272)[&support=580]:181.6023565)[&support=661]:680.8269225,((15[&color=#00C5CD]:600.232514,((2[&color=#7D26CD]:2.061552813,5[&color=#00C5CD]:2.061552813)[&support=925]:451.247678,(23[&color=#00C5CD]:386.8329743,31[&color=#00C5CD]:386.8329743)[&support=302]:66.4762565)[&support=326]:146.9232832)[&support=307]:289.6023528,(9[&color=#CDC673]:754.2716686,(10[&color=#EEC591]:336.5828278,12[&color=#707070]:336.5828278)[&support=993]:417.6888407)[&support=4]:135.5631982):63.72618505):42.41582593):149.0861758):42.53236262)[&support=744]:115.5273433)[&support=1000];
+END;
