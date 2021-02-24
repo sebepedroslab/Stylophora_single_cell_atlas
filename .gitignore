@@ -1,4 +1,3 @@
-*.R
 *.Rprofile
 *.Rhistory
 *umi.tab
@@ -13,6 +12,7 @@ clustering*/scdb/*sc_UMI_counts
 **/*RDS
 **/*csv
 **/*tsv
+revision
 saturation
 clustering_DS
 annotation/orthologous_pairs.txt

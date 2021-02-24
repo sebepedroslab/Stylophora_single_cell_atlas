@@ -116,11 +116,11 @@ mc_nowholev2=scdb_mc("mc_k30_nowholev2")
 mat_nowholev2=scdb_mat("mat_nowholev2")
 mat_nowholev2@cell_metadata=mat_nowholev2@cell_metadata[colnames(mat_nowholev2@mat),]
 mat_nowholev2@cell_metadata$color=as.character(rep(c("darkblue","darkred","darkorange"),table(factor(mat_nowholev2@cell_metadata$batch_set_id,levels=unique(mat_nowholev2@cell_metadata$batch_set_id)))))
-scr_batch_distribution(mc_nowholev2,mat_nowholev2,1:ncol(mc_nowholev2@mc_fp),batch_field="batch_set_id")
+scp_batch_distribution(mc_nowholev2,mat_nowholev2,1:ncol(mc_nowholev2@mc_fp),batch_field="batch_set_id")
 
 gset=scdb_gset("clust_markers_nowholev2")
 gset=names(gset@gene_set)
-scr_plot_cmod_markers(mc_nowholev2,mat_nowholev2,clust_ord=1:ncol(mc_nowholev2@mc_fp),gene_list=gset,output_file="Global_gene_expression_v3only_feature_genes.png",gene_annot_file="Annot_gene_lists/Xesp_annotation_v2_2020-06-25.csv",per_clust_genes=50,height=15000,width=6000,gene_min_fold=1.5,plot_sc=T,add_lateral_genes=F)
+scp_plot_cmod_markers(mc_nowholev2,mat_nowholev2,clust_ord=1:ncol(mc_nowholev2@mc_fp),gene_list=gset,output_file="Global_gene_expression_v3only_feature_genes.png",gene_annot_file="Annot_gene_lists/Xesp_annotation_v2_2020-06-25.csv",per_clust_genes=50,height=15000,width=6000,gene_min_fold=1.5,plot_sc=T)
 ```
 
 Identify strongly batch-related genes.
@@ -140,7 +140,7 @@ g_cor_whole3=cor(t(mc_nowholev2@mc_fp),m_f["whole_v3",],method="spearman")
 
 #the main batch effect is observed in v3 vs v2, hence we'll pick only genes with whole_v3 association:
 batchy=union(names(which(g_cor_whole3[,1]>quantile(g_cor_whole3,0.97))),names(which(g_cor_whole3[,1]<quantile(g_cor_whole3,0.03))))
-write.table(batchy,file.path(annotation_dir,"xenia_bl"),quote=F,col.names=F,row.names=F)
+write.table(batchy,file.path(scdb_dir,"xenia_bl.txt"),quote=F,col.names=F,row.names=F)
 ```
 
 Clustering v3+v2_no_whole
@@ -160,9 +160,9 @@ mc_nowholev2=scdb_mc("mc_k30_nowholev2_bl")
 mat_nowholev2=scdb_mat("mat_nowholev2")
 mat_nowholev2@cell_metadata=mat_nowholev2@cell_metadata[colnames(mat_nowholev2@mat),]
 mat_nowholev2@cell_metadata$color=as.character(rep(c("darkblue","darkred","darkorange"),table(factor(mat_nowholev2@cell_metadata$batch_set_id,levels=unique(mat_nowholev2@cell_metadata$batch_set_id)))))
-scr_batch_distribution(mc_nowholev2,mat_nowholev2,1:ncol(mc_nowholev2@mc_fp),batch_field="batch_set_id")
+scp_batch_distribution(mc_nowholev2,mat_nowholev2,1:ncol(mc_nowholev2@mc_fp),batch_field="batch_set_id")
 
-scr_plot_cmod_markers(mc_nowholev2,mat_nowholev2,clust_ord=1:ncol(mc_nowholev2@mc_fp),gene_list=gset,output_file="Global_gene_expression_v3only_feature_genes.png",gene_annot_file="Annot_gene_lists/Xesp_annotation_v2_2020-06-25.csv",per_clust_genes=50,height=15000,width=6000,gene_min_fold=1.5,plot_sc=T,add_lateral_genes=F)
+scp_plot_cmod_markers(mc_nowholev2,mat_nowholev2,clust_ord=1:ncol(mc_nowholev2@mc_fp),gene_list=gset,output_file="Global_gene_expression_v3only_feature_genes.png",gene_annot_file="Annot_gene_lists/Xesp_annotation_v2_2020-06-25.csv",per_clust_genes=50,height=15000,width=6000,gene_min_fold=1.5,plot_sc=T)
 ```
 
 ## Filtering bad metacells
@@ -539,7 +539,7 @@ mat_id <- "mat_nowholev2"
 mat <- scdb_mat(mat_id)
 mc <- scdb_mc(mc_id)
 
-bl <- readLines("annotation_xenia/xenia_bl")
+bl <- readLines(file.path(scdb_dir,"xenia_bl.txt"))
 
 ann <- fread(file.path(scdb_dir,"Xesp_metacell_annotation"))
 setnames(ann,c("metacell","cell_type","color"))
