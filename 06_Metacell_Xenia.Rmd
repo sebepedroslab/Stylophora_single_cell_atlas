@@ -72,36 +72,21 @@ Load the expression data to metacell database.
 
 ```{r mcell_import}
 # import UMI table
-mat_nm <- "xenia"
-mcell_import_multi_mars(
-  mat_nm = mat_nm,
-  dataset_table_fn = file.path(cluster_dir, "MARS_Batches.txt"),
-  base_dir = "umi.tab",
-  force = TRUE
-)
-mat <- scdb_mat(mat_nm)
-```
-
-Filter ERCCs
-
-```{r mcell_filter_genes}
-erccs <- rownames(mat@mat)[grepl("ERCC",rownames(mat@mat))] 
-peaks_counts <- rowSums(as.matrix(mat@mat[grepl("_peak_",rownames(mat@mat)),]))
-peaks_ignore <- names(which(peaks_counts<100))
-mcell_mat_ignore_genes(new_mat_id = mat_nm, mat_id = mat_nm, ig_genes = c(erccs,peaks_ignore))
-mat <- scdb_mat(mat_nm)
+mcell_import_multi_scmat_10x(mat_nm="mat_nowholev2",dataset_table_fn="10x_import_table.txt",force=T,base_dir="/users/asebe/asebe/proj/scRNA_xenia/Cellranger/")
+mat_nowholev2=scdb_mat("mat_nowholev2")
+kill_nowholev2=setdiff(colnames(mat_nowholev2@mat),orig_cell_names)
+mcell_mat_ignore_cells("mat_nowholev2","mat_nowholev2",ig_cells=kill_nowholev2)
+mat_nowholev2=scdb_mat("mat_nowholev2")
 ```
 
 Filter by cell depth (UMIs/cell)
 
 ```{r mcell_filter}
-x <- colSums(as.matrix(mat@mat))
-mcell_plot_umis_per_cell(mat_id = mat_nm, min_umis_cutoff = 100)
-large_cells <- names(which(x>10000))
-small_cells <- names(which(x<100))
-mat_nm_filt <- "mat_nowholev2"
-mcell_mat_ignore_cells(new_mat_id = mat_nm_filt ,mat_id = mat_nm, ig_cells=c(small_cells,large_cells))
-mat <- scdb_mat(mat_nm_filt)
+erccs=rownames(mat_nowholev2@mat)[grepl("ERCC",rownames(mat_nowholev2@mat))]
+peak_counts=rowSums(as.matrix(mat_nowholev2@mat[grepl("peak_",rownames(mat_nowholev2@mat)),]))
+peaks_kill=names(which(peak_counts < 300))
+mcell_mat_ignore_genes("mat_nowholev2","mat_nowholev2",ig_genes=c(peaks_kill,erccs))
+mat_nowholev2=scdb_mat("mat_nowholev2")
 ```
 
 Calculate gene statistics
@@ -113,45 +98,71 @@ mat <- scdb_mat(mat_nm_filt)
 
 ## Building metacells
 
-Select marker genes for building metacell graph.  
+Select marker genes for building metacell graph and Build metacells.
 
 ```{r mcell_markers}
-#bkg <- readLines(file.path(annot_dir,"black_list_genes"))
-mcell_gset_filter_multi(
-  gstat_id = "gstat",
-  gset_id = "clust_markers",
-  T_tot = 30, T_top3 = 2, T_szcor = -0.05, T_niche = 0.05, 
-  blacklist = bkg, force_new=TRUE
-)
-mcell_plot_gstats(gstat_id = "gstat", gset_id = "clust_markers")
+mcell_add_gene_stat(gstat_id="gstat_nowholev2", mat_id="mat_nowholev2", force=T)
+mcell_gset_filter_multi("gstat_nowholev2","clust_markers_nowholev2",T_tot=30,T_top3=2,T_szcor=-0.08,T_niche=0.01,force_new=T)
+mcell_add_cgraph_from_mat_bknn(mat_id="mat_nowholev2",gset_id="clust_markers_nowholev2",graph_id="graphk100_nowholev2",K=100,dsamp=F)
+mcell_coclust_from_graph_resamp(coc_id="coc500_min20_nowholev2",graph_id="graphk100_nowholev2",min_mc_size=20,p_resamp=0.75,n_resamp=100)
+mcell_mc_from_coclust_balanced("coc500_min20_nowholev2",mat="mat_nowholev2",mc_id="mc_k30_nowholev2",K=30,min_mc_size=20,alpha=2)
+
 ```
 
-Build metacells
+Batch distribution in v3+v2_nowhole
 
-```{r mcell_knn}
-# build cell graph
-mcell_add_cgraph_from_mat_bknn(
-  mat_id = mat_nm_filt,
-  gset_id = "clust_markers",
-  graph_id = "graphk100", K = 100, dsamp=FALSE
-)
+```{r}
+mc_nowholev2=scdb_mc("mc_k30_nowholev2")
+mat_nowholev2=scdb_mat("mat_nowholev2")
+mat_nowholev2@cell_metadata=mat_nowholev2@cell_metadata[colnames(mat_nowholev2@mat),]
+mat_nowholev2@cell_metadata$color=as.character(rep(c("darkblue","darkred","darkorange"),table(factor(mat_nowholev2@cell_metadata$batch_set_id,levels=unique(mat_nowholev2@cell_metadata$batch_set_id)))))
+scr_batch_distribution(mc_nowholev2,mat_nowholev2,1:ncol(mc_nowholev2@mc_fp),batch_field="batch_set_id")
 
-# resample graph and compute metacells for each resampling
-mcell_coclust_from_graph_resamp(
-  coc_id = "coc500_min20",
-  graph_id = "graphk100",
-  min_mc_size = 20, p_resamp = 0.75, n_resamp = 1000
-)
+gset=scdb_gset("clust_markers_nowholev2")
+gset=names(gset@gene_set)
+scr_plot_cmod_markers(mc_nowholev2,mat_nowholev2,clust_ord=1:ncol(mc_nowholev2@mc_fp),gene_list=gset,output_file="Global_gene_expression_v3only_feature_genes.png",gene_annot_file="Annot_gene_lists/Xesp_annotation_v2_2020-06-25.csv",per_clust_genes=50,height=15000,width=6000,gene_min_fold=1.5,plot_sc=T,add_lateral_genes=F)
+```
 
-# final graph and metacells from co-occurence in resampled graphs
-mcell_mc_from_coclust_balanced(
-  mc_id = "mc_k30",
-  coc_id = "coc500_min20",
-  mat_id = mat_nm_filt,
-  K = 30, min_mc_size = 20, alpha = 2 # changed from K=100
-)
+Identify strongly batch-related genes.
 
-mc <- scdb_mc("mc_k30")
+```{r}
+gset=scdb_gset("clust_markers_nowholev2")
+gset=names(gset@gene_set)
+
+#we first calculate the frequency of each batch in each metacell
+mc_nowholev2=scdb_mc("mc_k30_nowholev2")
+mat_nowholev2=scdb_mat("mat_nowholev2")
+m=matrix(nrow=3,ncol=ncol(mc_nowholev2@mc_fp),unlist(tapply(mat_nowholev2@cell_metadata[names(mc@mc),"batch_set_id"],mc_nowholev2@mc,function(x) table(factor(x,levels=unique(mat_nowholev2@cell_metadata$batch_set_id))))))
+m_f=t(apply(m,1,function(x) x/colSums(m)))
+rownames(m_f)=unique(mat_nowholev2@cell_metadata$batch_set_id)
+
+g_cor_whole3=cor(t(mc_nowholev2@mc_fp),m_f["whole_v3",],method="spearman")
+
+#the main batch effect is observed in v3 vs v2, hence we'll pick only genes with whole_v3 association:
+batchy=union(names(which(g_cor_whole3[,1]>quantile(g_cor_whole3,0.97))),names(which(g_cor_whole3[,1]<quantile(g_cor_whole3,0.03))))
+write.table(batchy,file.path(annotation_dir,"xenia_bl"),quote=F,col.names=F,row.names=F)
+```
+
+Clustering v3+v2_no_whole
+
+```{r}
+batchy=scan("tmp_bl_3perc",what="")
+mcell_gset_filter_multi("gstat_nowholev2","clust_markers_nowholev2_bl",T_tot=30,T_top3=2,T_szcor=-0.08,T_niche=0.01,force_new=T,bl=batchy)
+mcell_add_cgraph_from_mat_bknn(mat_id="mat_nowholev2",gset_id="clust_markers_nowholev2_bl",graph_id="graphk100_nowholev2_bl",K=100,dsamp=F)
+mcell_coclust_from_graph_resamp(coc_id="coc500_min20_nowholev2_bl",graph_id="graphk100_nowholev2_bl",min_mc_size=20,p_resamp=0.75,n_resamp=100)
+mcell_mc_from_coclust_balanced("coc500_min20_nowholev2_bl",mat="mat_nowholev2",mc_id="mc_k30_nowholev2_bl",K=30,min_mc_size=20,alpha=2)
+```
+
+Check batch distribution in v3+v2_nowhole after removing blacklisted genes.
+
+```{r}
+mc_nowholev2=scdb_mc("mc_k30_nowholev2_bl")
+mat_nowholev2=scdb_mat("mat_nowholev2")
+mat_nowholev2@cell_metadata=mat_nowholev2@cell_metadata[colnames(mat_nowholev2@mat),]
+mat_nowholev2@cell_metadata$color=as.character(rep(c("darkblue","darkred","darkorange"),table(factor(mat_nowholev2@cell_metadata$batch_set_id,levels=unique(mat_nowholev2@cell_metadata$batch_set_id)))))
+scr_batch_distribution(mc_nowholev2,mat_nowholev2,1:ncol(mc_nowholev2@mc_fp),batch_field="batch_set_id")
+
+scr_plot_cmod_markers(mc_nowholev2,mat_nowholev2,clust_ord=1:ncol(mc_nowholev2@mc_fp),gene_list=gset,output_file="Global_gene_expression_v3only_feature_genes.png",gene_annot_file="Annot_gene_lists/Xesp_annotation_v2_2020-06-25.csv",per_clust_genes=50,height=15000,width=6000,gene_min_fold=1.5,plot_sc=T,add_lateral_genes=F)
 ```
 
 ## Filtering bad metacells
