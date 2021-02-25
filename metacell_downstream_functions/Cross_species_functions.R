@@ -1420,14 +1420,14 @@ commonGenes <- function(
 #' @param genes cell type specific genes 
 #' @param scale.fc.max numeric, scale gene fc to this max value for plotting (default NULL)
 #' @param sign.test function to calculate significance test, either `t.test` or `wilcox.test`
-#' @param sign.label "pval","padj","fdr","fdrcode"
+#' @param sign.label "pval","padj","p.adj.signif"
 #' @param title logical, show cell type names as title
 #' @param x.names logical, hide cell type names on x axis
 #' @param x.names.replacement named character, optional replacement pattern for cell type labes on x axis
 #' 
 csps_plot_groupped_gene_expression <- function(
   mc_fp, ct, species=c("Spis","Nvec","Xesp","Hvul"), species_cell_type_names=TRUE, 
-  genes, min.genes=3, scale.fc.max=NULL, sign=TRUE, sign.test=t.test, sign.label="fdrcode",
+  genes, min.genes=3, scale.fc.max=NULL, sign=TRUE, sign.test=t.test, sign.label="p.adj.signif",
   col, title=TRUE, x.names=TRUE, x.names.angle=30, x.names.replacement=NULL,
   text.size=12, label.size=12, title.size=12, tip.length=0, step.increase=0.1
 ) {
@@ -1509,7 +1509,7 @@ csps_plot_groupped_gene_expression <- function(
         labs(x=NULL,y="gene fold change",title=ctl)
       if (sign==TRUE) {
         gp <- gp + stat_pvalue_manual(
-          st, label="p.adj.signif", y.position="y",
+          st, label=sign.label, y.position="y",
           step.increase=step.increase, step.group.by="species",
           label.size = label.size/3.88, tip.length=tip.length
         )
