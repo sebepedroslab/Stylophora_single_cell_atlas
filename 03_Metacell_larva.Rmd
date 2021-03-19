@@ -345,7 +345,7 @@ names(mc_f@colors)=as.character(ann$metacell)
 scdb_add_mc("mc_kill_reord",mc_f)
 ```
 
-# Save metacell output files.
+# Save metacell output files
 
 ```{r mc_save}
 mc_id <- "mc_larva"
@@ -360,6 +360,7 @@ write.table(
   mc@mc_fp, file=file.path(scdb_dir, "Spis_larva_metacell_gene_FC"), 
   sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
 )
+saveRDS(mc@mc_fp, file=file.path(scdb_dir, "Spis_larva_metacell_gene_FC.RDS"))
 
 # UMI counts table
 mc_umis_list <- lapply(colnames(mc@mc_fp), function(x) {
@@ -372,6 +373,7 @@ write.table(
   mc_umis, file=file.path(scdb_dir, "Spis_larva_metacell_UMI_counts"), 
   sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
 )
+saveRDS(mc_umis, file=file.path(scdb_dir, "Spis_larva_metacell_UMI_counts.RDS"))
 
 # UMI fractions table
 mc_umifrac <- mc_umis/rep(colSums(mc_umis),each=nrow(mc_umis))
@@ -379,6 +381,7 @@ write.table(
   mc_umifrac, file=file.path(scdb_dir, "Spis_larva_metacell_UMI_fractions"), 
   sep="\t", quote=FALSE, row.names=TRUE, col.names=TRUE
 )
+saveRDS(mc_umifrac, file=file.path(scdb_dir, "Spis_larva_metacell_UMI_fractions.RDS"))
 
 # cell assignments to metacells
 cell_df <- data.table(
@@ -656,9 +659,9 @@ hms <- scp_plot_cmod_markers(
   black_list = c(bl,grep("orphan",rownames(mc@mc_fp),value=TRUE)),
   highlight_genes = top_genes,
   output_file=file.path(scdb_fig_dir,sprintf("Spis_larva_gene_expression")),
-  plot_format = "pdf", width = 40, height = 35, plot_sc_width_cex = 1,
-  show_gene_names = TRUE, gene_font_size = 18, gene_chr_limit = 30,
-  show_mc_names = TRUE, mc_font_size = 18, mc_label_cex = 0.6,
+  plot_format = "pdf", width = 45, height = 40, plot_sc_width_cex = 1,
+  show_gene_names = TRUE, gene_font_size = 42, gene_chr_limit = 20,
+  show_mc_names = FALSE, mc_font_size = 18, mc_label_cex = 0.6,
   clust_anno_size = unit(5,"mm"),
   gene_annot_file=file.path(annot_dir,"Spis_annotation_v7_2020-10-26_clean"), 
   tfs_annot_file=file.path(annot_dir,"curated_TFh_Spis_EDITED_NAMES.csv"), 

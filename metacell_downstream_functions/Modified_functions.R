@@ -32,7 +32,7 @@ mcell_mc2d_plot_mas = function(
   show_mc=TRUE, show_mcid=TRUE, colors=NULL,
   plot_edges=TRUE, min_edge_l=0, edge_w = 1, short_edge_w=0, 
   cell_outline=F, sc_colors=NULL, sc_cex=1, sc_alpha=1, mcp_2d_id_cex=NULL,
-  filt_mc=NULL, plot_format="png", raster=FALSE
+  filt_mc=NULL, plot_format="png"
 )
 {
   mcp_2d_height = get_param("mcell_mc2d_height",package="metacell")
@@ -62,14 +62,11 @@ mcell_mc2d_plot_mas = function(
   if (plot_format=="png") {
     png(fig_nm, width = mcp_2d_width, height = mcp_2d_height)
   } else if (plot_format=="pdf") {
-    if(raster==TRUE){
-      rasterpdf::raster_pdf(fig_nm, width = mcp_2d_width/72, height = mcp_2d_height/72, res=200)
-    } else {
-      pdf(fig_nm, width = mcp_2d_width/72, height = mcp_2d_height/72)
-    }
+    pdf(fig_nm, width = mcp_2d_width/72, height = mcp_2d_height/72)
   } else {
     stop("plot_format should be either 'png' or 'pdf'")
   }
+  par(bg=NA)
   if(is.null(colors)) {
     cols = mc@colors
   } else {
@@ -83,10 +80,10 @@ mcell_mc2d_plot_mas = function(
       sc_colors <- sc_colors[names(mc2d@sc_x)]
   }
   if(cell_outline) {
-    plot(mc2d@sc_x, mc2d@sc_y, pch=21, bg=alpha(sc_colors,sc_alpha), cex=sc_cex, lwd=0.5,
+    raster::plot(mc2d@sc_x, mc2d@sc_y, pch=21, bg=alpha(sc_colors,sc_alpha), cex=sc_cex, lwd=0.5,
          axes=FALSE, frame.plot=TRUE, xlab="", ylab="")
   } else {
-    plot(mc2d@sc_x, mc2d@sc_y, pch=19, col=alpha(sc_colors,sc_alpha), cex=sc_cex,
+    raster::plot(mc2d@sc_x, mc2d@sc_y, pch=19, col=alpha(sc_colors,sc_alpha), cex=sc_cex,
          axes=FALSE, frame.plot=TRUE, xlab="", ylab="")
   }
   if(show_mc) {
@@ -170,7 +167,7 @@ mcell_mc2d_plot_values <- function (
     } else if (is.null(mc_values) & is.null(sc_values)) {
       stop("You need to specify either mc_values or sc_values, or both!")
     }
-    x = pmin(pmax(mc_values, min_v), max_v) - 
+    x = pmin(pmax(log2(mc_values), min_v), max_v) - 
         min_v
     shades = colorRampPalette(colspec)(100 * (max_v - min_v) + 1)
     mc_cols = shades[round(100 * x) + 1]

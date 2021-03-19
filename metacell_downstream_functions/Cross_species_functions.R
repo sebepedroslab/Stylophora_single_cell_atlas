@@ -120,6 +120,21 @@ calcKLD=function(mc_fp) {
   list(mat=kld_mat,probs=kld_list)
 }
 
+#' Quantile normalization
+#' @param x matrix or data.frame
+quantile_normalisation <- function(x){
+  df_rank <- data.frame(apply(x,2,rank,ties.method="min"))
+  df_sorted <- data.frame(apply(x, 2, sort))
+  df_mean <- apply(df_sorted, 1, mean)
+  
+  index_to_mean <- function(my_index, my_mean){
+    return(my_mean[my_index])
+  }
+  
+  df_final <- apply(df_rank, 2, index_to_mean, my_mean=df_mean)
+  rownames(df_final) <- rownames(x)
+  return(df_final)
+}
 
 # # # # # # # # # # # # # # # # #
 #                               #
@@ -226,7 +241,7 @@ csps_create_crossspecies_object <- function(
   cnm=colnames(merged)
   
   if(quant_norm){
-    if(class(merged)=="dgCMatrix") {
+    if(any(class(merged)=="dgCMatrix")) {
       sparse=TRUE
       merged=as.matrix(merged)
       copymat=FALSE
@@ -234,7 +249,12 @@ csps_create_crossspecies_object <- function(
       sparse=FALSE
       copymat=TRUE
     }
-    merged=preprocessCore::normalize.quantiles(merged,copy=copymat)
+    merged=tryCatch({
+      preprocessCore::normalize.quantiles(merged,copy=copymat)
+    }, error = function(e){
+      warning(e)
+      quantile_normalisation(merged)
+    })
     if (sparse==TRUE)
       merged=Matrix::Matrix(merged,sparse=TRUE)
     rownames(merged)=rnm
@@ -371,7 +391,7 @@ csps_create_3way_crossspecies_object <- function(
   cnm=colnames(merged)
   
   if(quant_norm){
-    if(class(merged)=="dgCMatrix") {
+    if(any(class(merged)=="dgCMatrix")) {
       sparse=TRUE
       merged=as.matrix(merged)
       copymat=FALSE
@@ -379,7 +399,11 @@ csps_create_3way_crossspecies_object <- function(
       sparse=FALSE
       copymat=TRUE
     }
-    merged=preprocessCore::normalize.quantiles(merged,copy=copymat)
+    merged=tryCatch({
+      preprocessCore::normalize.quantiles(merged,copy=copymat)
+    }, error = function(e){
+      quantile_normalisation(merged)
+    })
     if (sparse==TRUE)
       merged=Matrix::Matrix(merged,sparse=TRUE)
     rownames(merged)=rnm
@@ -634,7 +658,7 @@ csps_create_4way_crossspecies_object <- function(
   cnm=colnames(merged)
   
   if(quant_norm){
-    if(class(merged)=="dgCMatrix") {
+    if(any(class(merged)=="dgCMatrix")) {
       sparse=TRUE
       merged=as.matrix(merged)
       copymat=FALSE
@@ -642,7 +666,11 @@ csps_create_4way_crossspecies_object <- function(
       sparse=FALSE
       copymat=TRUE
     }
-    merged=preprocessCore::normalize.quantiles(merged,copy=copymat)
+    merged=tryCatch({
+      preprocessCore::normalize.quantiles(merged,copy=copymat)
+    }, error = function(e){
+      quantile_normalisation(merged)
+    })
     if (sparse==TRUE)
       merged=Matrix::Matrix(merged,sparse=TRUE)
     rownames(merged)=rnm
@@ -969,21 +997,38 @@ csps_plot_correlation_matrix=function(
       cor_color <- col_fun(seq(-2,2,0.1))
       if (cor_method=="kld") cor_color <- rev(cor_color)
     }
-    
-    hm <- Heatmap(
-      pmin(cor_mat,cor_max), name=cor_mat_name,# col=cor_color, 
-      rect_gp = gpar(col = "gray50", lwd = 0.2), border=TRUE, 
-      cluster_rows = FALSE, cluster_columns = FALSE,
-      show_row_names = FALSE, show_column_names = FALSE,
-      right_annotation = right_row_col_ha, left_annotation = left_row_col_ha,  
-      top_annotation = top_column_col_ha, bottom_annotation = bottom_column_col_ha,
-      heatmap_legend_param = list(
-        title = cor_mat_name, border = TRUE,
-        legend_height = unit(6, "cm"), grid_width = unit(annotation_size,"mm"),
-        title_position = "leftcenter-rot", title_gp = gpar(fontsize = label_font_size),
-        labels_gp = gpar(fontsize = label_font_size)
+    cv <- as.numeric(stringr::str_extract(as.character(packageVersion("ComplexHeatmap")),"\\d\\.\\d"))
+    if (cv < 2) {
+      hm <- Heatmap(
+        pmin(cor_mat,cor_max), name=cor_mat_name,# col=cor_color, 
+        rect_gp = gpar(col = "gray50", lwd = 0.2), 
+        cluster_rows = FALSE, cluster_columns = FALSE,
+        show_row_names = FALSE, show_column_names = FALSE,
+        top_annotation = top_column_col_ha, bottom_annotation = bottom_column_col_ha,
+        heatmap_legend_param = list(
+          title = cor_mat_name, border = TRUE,
+          legend_height = unit(6, "cm"), grid_width = unit(annotation_size,"mm"),
+          title_position = "leftcenter-rot", title_gp = gpar(fontsize = label_font_size),
+          labels_gp = gpar(fontsize = label_font_size)
+        )
       )
-    )
+    } else {
+      hm <- Heatmap(
+        pmin(cor_mat,cor_max), name=cor_mat_name,# col=cor_color, 
+        rect_gp = gpar(col = "gray50", lwd = 0.2), border=TRUE, 
+        cluster_rows = FALSE, cluster_columns = FALSE,
+        show_row_names = FALSE, show_column_names = FALSE,
+        right_annotation = right_row_col_ha, left_annotation = left_row_col_ha,  
+        top_annotation = top_column_col_ha, bottom_annotation = bottom_column_col_ha,
+        heatmap_legend_param = list(
+          title = cor_mat_name, border = TRUE,
+          legend_height = unit(6, "cm"), grid_width = unit(annotation_size,"mm"),
+          title_position = "leftcenter-rot", title_gp = gpar(fontsize = label_font_size),
+          labels_gp = gpar(fontsize = label_font_size)
+        )
+      )
+    }
+
   }
   if (!is.null(output_file)) {
     
