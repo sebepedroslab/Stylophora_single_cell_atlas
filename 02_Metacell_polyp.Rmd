@@ -391,6 +391,11 @@ cell_df <- data.table(
 )
 fwrite(cell_df, file=file.path(scdb_dir, "Spis_polyp_metacell_assignments"), sep="\t")
 
+# 2d data
+mc2d_id <- sprintf("%s.2dproj",mc_id)
+mc2d <- scdb_mc2d(id=mc2d_id)
+saveRDS(mc2d, file=file.path(scdb_dir, "Spis_polyp_mc2d.RDS"))
+
 # single cell UMIs
 saveRDS(mat@mat[,names(mc@mc)], file=file.path(scdb_dir, "Spis_polyp_sc_UMI_counts.RDS"))
 
@@ -631,15 +636,12 @@ mcell_mc2d_plot_mas(
   fn_suf="Spis_polyp3", plot_format="pdf", raster=TRUE
 )
 # png
-tgconfig::override_params(file.path(scdb_dir,"spis_polyp_metacell_params.yaml"),"metacell")
+set_param("mcell_mc2d_cex",1.4,"metacell")
 mcell_mc2d_plot_mas(
   mc2d_id=sprintf("%s.2dproj",mc_id),
   sc_alpha=1, sc_cex=0.6, 
   fn_suf="Spis_polyp", plot_format="png"
 )
-```
-```{r mc_2d_proj.png, eval=TRUE, echo=FALSE}
-knitr::include_graphics("clustering_polyp/scdb/figs/mc_polyp.2dproj.2d_graph_proj.png")
 ```
 
 Gene expression heatmaps
@@ -675,26 +677,6 @@ hms <- scp_plot_cmod_markers(
   per_clust_genes=10, gene_min_fold=2, smoothen=5, max_expression_fc=5, max_expression_fc_sc=5,
   plot_sc=TRUE, print_heatmap=FALSE
 )
-
-# # png
-# hms_mini <- scp_plot_cmod_markers(
-#   mc_object = mc, mat_object = mat,
-#   clust_ord=niche_order, clust_col = niche_color, clust_anno_size = unit(5,"mm"),
-#   black_list = c(bl,grep("orphan",rownames(mc@mc_fp),value=TRUE)), 
-#   highlight_genes = top_genes,
-#   output_file=file.path(scdb_fig_dir,sprintf("Spis_polyp_gene_expression_minimal")),
-#   plot_format = "png", width = 1800, height = 1600, plot_sc_width_cex = 1.2,
-#   show_gene_names = TRUE, gene_font_size = 18, gene_chr_limit = 30, 
-#   show_mc_names = FALSE, #mc_font_size = 10, mc_label_cex = 1, 
-#   gene_annot_file=file.path(annot_dir,"Spis_annotation_v7_2020-10-26_clean"), 
-#   tfs_annot_file=file.path(annot_dir,"curated_TFh_Spis_EDITED_NAMES.csv"), 
-#   per_clust_genes=20, gene_min_fold=2, 
-#   plot_sc=TRUE, print_heatmap=FALSE
-# )
-
-```
-```{r metacell_expression_heatmap_minimal.png, eval=TRUE, echo=FALSE}
-knitr::include_graphics("clustering_polyp/scdb/figs/Spis_polyp_gene_expression_minimal.png")
 ```
 
 

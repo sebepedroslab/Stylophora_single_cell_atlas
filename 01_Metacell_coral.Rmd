@@ -543,6 +543,11 @@ cell_df <- data.table(
 )
 fwrite(cell_df, file=file.path(scdb_dir, "Spis_coral_metacell_assignments"), sep="\t")
 
+# 2d data
+mc2d_id <- sprintf("%s.2dproj",mc_id)
+mc2d <- scdb_mc2d(id=mc2d_id)
+saveRDS(mc2d, file=file.path(scdb_dir, "Spis_coral_mc2d.RDS"))
+
 # single cell UMIs
 saveRDS(mat@mat[,names(mc@mc)], file=file.path(scdb_dir, "Spis_coral_sc_UMI_counts.RDS"))
 ```
@@ -841,7 +846,6 @@ mcell_mc2d_plot_mas(
   fn_suf="Spis_coral3", plot_format="pdf", raster=TRUE
 )
 # png
-#tgconfig::override_params(file.path(scdb_dir,"spis_metacell_params.yaml"),"metacell")
 tgconfig::set_param("mcell_mc2d_width",1600,"metacell")
 tgconfig::set_param("mcell_mc2d_height",1600,"metacell")
 tgconfig::set_param("mcell_mc2d_cex",2,"metacell")
@@ -851,9 +855,6 @@ mcell_mc2d_plot_mas(
   show_mc=TRUE, show_mcid=TRUE, plot_edges=TRUE,
   fn_suf="Spis_coral", plot_format="png"
 )
-```
-```{r mc_2d_proj.png, eval=TRUE, echo=FALSE}
-knitr::include_graphics("clustering_coral/scdb/figs/mc_coral.2dproj.2d_graph_proj.png")
 ```
 
 Gene expression heatmaps
@@ -878,16 +879,12 @@ vargenes <- apply(mc_fp, 2, function(x) {
   top_genes 
 })
 top_genes <- unique(unlist(vargenes,use.names=FALSE))
-top_genes <- fread("annotation/marker_genes.txt",header=FALSE)[[1]]
-marker_genes <- fread("annotation/marker_genes.txt",header=FALSE)[[1]]
-heatmap_genes <- intersect(top_genes,marker_genes)
 
 # save detailed heatmap as pdf file
 hms <- scp_plot_cmod_markers(
   mc_object = mc, mat_object = mat,
   clust_ord=niche_order, clust_col=niche_color,
   black_list = c(bl,grep("orphan",rownames(mc@mc_fp),value=TRUE)),
-  #gene_list = heatmap_genes, 
   highlight_genes = top_genes,
   output_file=file.path(scdb_fig_dir,sprintf("Spis_coral_gene_expression")),
   plot_format = "pdf", width = 38, height = 44, plot_sc_width_cex = 1,
@@ -900,28 +897,6 @@ hms <- scp_plot_cmod_markers(
   max_expression_fc=5, max_expression_fc_sc=5,
   plot_sc=TRUE, print_heatmap=FALSE
 )
-
-# # png
-# hms_mini <- scp_plot_cmod_markers(
-#   mc_object = mc, mat_object = mat,
-#   clust_ord=niche_order, clust_col = niche_color,
-#   black_list = c(bl,grep("orphan",rownames(mc@mc_fp),value=TRUE)), 
-#   highlight_genes = top_genes,
-#   output_file=file.path(scdb_fig_dir,sprintf("Spis_coral_gene_expression_minimal")),
-#   plot_format = "png", width = 2600, height = 3200, res = 100, plot_sc_width_cex = 1,
-#   #plot_format = "pdf", width = 60, height = 150, plot_sc_width_cex = 1.2,
-#   show_gene_names = TRUE, gene_font_size = 10, gene_chr_limit = 40, 
-#   show_mc_names = FALSE, mc_font_size = 0, mc_label_cex = 1.5, 
-#   clust_bars = ssmc, #clust_anno_size = unit(5,"mm"),
-#   gene_annot_file = file.path(annot_dir,"Spis_annotation_v7_2020-10-26_clean"), 
-#   tfs_annot_file = file.path(annot_dir,"curated_TFh_Spis_EDITED_NAMES.csv"), 
-#   per_clust_genes = 10, gene_min_fold = 2, 
-#   plot_sc = TRUE, print_heatmap = FALSE
-# )
-
-```
-```{r metacell_expression_heatmap_minimal.png, eval=TRUE, echo=FALSE}
-knitr::include_graphics("clustering_coral/scdb/figs/Spis_coral_gene_expression_minimal.png")
 ```
 
 # Cell type level metacell analysis
