@@ -1,0 +1,12 @@
+Amp.Batch.ID	Seq.Batch.ID	Batch.Set.ID	dataset	color
+SETLV0001	SB0004	SETLV0001	Settling_larva	sienna4
+SETLV0002	SB0004	SETLV0002	Settling_larva	sienna4
+SETLV0003	SB0004	SETLV0003	Settling_larva	sienna4
+SETLV0004	SB0004	SETLV0004	Settling_larva	sienna4
+SETLV0005	SB0006	SETLV0005	Settling_larva	sienna4
+SETLV0006	SB0006	SETLV0006	Settling_larva	sienna4
+SETLV0007	SB0006	SETLV0007	Settling_larva	sienna4
+SETLV0008	SB0006	SETLV0008	Settling_larva	sienna4
+SETLV0009	SB0006	SETLV0009	Settling_larva	sienna4
+SETLV0010	SB0006	SETLV0010	Settling_larva	sienna4
+SETLV0011	SB0006	SETLV0011	Settling_larva	sienna4

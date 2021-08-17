@@ -1,0 +1,17 @@
+Amp.Batch.ID	Seq.Batch.ID	Batch.Set.ID	dataset	color
+SWILV0001	SB0003	SWILV0001	Swim_larva	darkgoldenrod3
+SWILV0002	SB0004	SWILV0002	Swim_larva	darkgoldenrod3
+SWILV0003	SB0004	SWILV0003	Swim_larva	darkgoldenrod3
+SWILV0004	SB0004	SWILV0004	Swim_larva	darkgoldenrod3
+SWILV0005	SB0004	SWILV0005	Swim_larva	darkgoldenrod3
+SWILV0006	SB0006	SWILV0006	Swim_larva	darkgoldenrod3
+SWILV0007	SB0006	SWILV0007	Swim_larva	darkgoldenrod3
+SWILV0008	SB0006	SWILV0008	Swim_larva	darkgoldenrod3
+SWILV0009	SB0006	SWILV0009	Swim_larva	darkgoldenrod3
+SWILV0010	SB0006	SWILV0010	Swim_larva	darkgoldenrod3
+SWILV0011	SB0006	SWILV0011	Swim_larva	darkgoldenrod3
+SWILV0012	SB0006	SWILV0012	Swim_larva	darkgoldenrod3
+SWILV0013	SB0006	SWILV0013	Swim_larva	darkgoldenrod3
+SWILV0014	SB0006	SWILV0014	Swim_larva	darkgoldenrod3
+SWILV0015	SB0006	SWILV0015	Swim_larva	darkgoldenrod3
+SWILV0016	SB0006	SWILV0016	Swim_larva	darkgoldenrod3

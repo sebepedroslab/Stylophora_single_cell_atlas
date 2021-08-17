@@ -537,11 +537,8 @@ write.table(
 saveRDS(mc_umifrac, file=file.path(scdb_dir, "Spis_coral_metacell_UMI_fractions.RDS"))
 
 # cell assignments to metacells
-cell_df <- data.table(
-  cell = names(mc@mc),
-  metacell = mc@mc
-)
-fwrite(cell_df, file=file.path(scdb_dir, "Spis_coral_metacell_assignments"), sep="\t")
+cell_mc <- structure(mc@mc, names=names(mc@mc))
+saveRDS(cell_mc, file=file.path(scdb_dir, sprintf("Spis_coral_metacell_assignments.RDS",mc_id)))
 
 # 2d data
 mc2d_id <- sprintf("%s.2dproj",mc_id)
@@ -608,6 +605,19 @@ peaks_ignore <- names(which(peaks_counts<100))
 mcell_mat_ignore_genes(new_mat_id = mat_nm, mat_id = mat_nm, ig_genes = c(erccs,symbio_bl,peaks_ignore))
 # save mtx
 saveMTX(mat@mat, "GEO/symbiodinium")
+```
+
+Save data for all species
+
+```{r}
+files <- list.files("Dryad",pattern="*sc_UMI_counts.RDS",full.names=TRUE)
+for (rds in files) {
+  sp <- substr(basename(rds),1,4)
+  name <- stringr::str_remove(basename(rds),".RDS")
+  mat <- readRDS(rds)
+  #if (sp=="Spis") rownames(mat) <- str_replace(rownames(mat),"Spis","Spis_")
+  saveMTX(mat,file.path("Dryad",name))
+}
 ```
 
 # Metacell visualizations
@@ -856,6 +866,16 @@ mcell_mc2d_plot_mas(
   fn_suf="Spis_coral", plot_format="png"
 )
 ```
+```{r}
+# new version
+mc2d_id <- sprintf("%s.2dproj",mc_id)
+mc2d <- scdb_mc2d(mc2d_id)
+scp_plot_sc_2d(
+  mc2d, mc, plot_edges = TRUE, plot_mc_name = TRUE, plot_mcs = TRUE,
+  output_file = file.path(scdb_fig_dir,sprintf("2d_%s.pdf",mc_id)),
+  width = 12, height = 12
+)
+```
 
 Gene expression heatmaps
 
@@ -898,6 +918,43 @@ hms <- scp_plot_cmod_markers(
   plot_sc=TRUE, print_heatmap=FALSE
 )
 ```
+```{r}
+# new version
+mc_cols <- structure(mc@colors,names=niche_order)
+mc_cluster_df <- data.frame(cell_type=ann$cell_type,row.names=as.character(ann$metacell))
+cluster_cols_df <- unique(ann[,2:3])
+cell_type_cols <- structure(cluster_cols_df$color, names=cluster_cols_df$cell_type)
+sc_cluster_df <- data.frame(cell_type=ann[match(mc@mc,metacell)][[2]],row.names=names(mc@mc))
+
+clust_col_df <- mc_cluster_df
+clust_col_sc_df <- sc_cluster_df
+clust_col_colors <- list(cell_type=cell_type_cols)
+
+marker_data_list <- scp_plot_cmod_markers_select(
+    mc, mat, black_list=bl, 
+    gene_annot_file=file.path(annot_dir,"Spis_annotation_v7_2020-10-26_clean"), 
+    highlight_genes_annot_file=file.path(annot_dir,"curated_TFh_Spis_EDITED_NAMES.csv"), 
+    per_clust_genes=10, gene_min_fold=2, 
+    clust_ord=niche_order, output_file=file.path(scdb_dir, sprintf("Spis_%s_markers_list.RDS",mc_id))
+)
+scp_plot_cmod_markers_mc(
+    marker_data_list, 
+    clust_col=clust_col_df, clust_col_color=clust_col_colors, 
+    clust_anno_size=unit(2,"mm"),
+    output_file=file.path(scdb_fig_dir,sprintf("Gene_expression_%s.pdf",mc_id)),
+    width=16, height=28, 
+    show_gene_names=TRUE, show_clust_borders=TRUE,
+)
+scp_plot_cmod_markers_sc(
+    marker_data_list, mc, mat, 
+    clust_col=clust_col_sc_df, clust_col_color=clust_col_colors,
+    clust_anno_size=unit(2,"mm"),
+    output_file=file.path(scdb_fig_dir,sprintf("Gene_expression_%s_sc.pdf",mc_id)),
+    width=16, height=28, 
+    show_gene_names=TRUE, show_clust_borders=TRUE
+)
+```
+
 
 # Cell type level metacell analysis
 
