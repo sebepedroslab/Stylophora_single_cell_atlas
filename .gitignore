@@ -9,7 +9,8 @@ clustering*/scdb/*cells_UMI_counts
 clustering*/scdb/*sc_UMI_counts
 **/*Rda
 **/*RDS
-**/*csv
+clustering**/*csv
+clustering_coral/scdb/Metacell_annotation_kill
 **/*tsv
 revision
 saturation
