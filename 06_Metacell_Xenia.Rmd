@@ -72,11 +72,14 @@ Load the expression data to metacell database.
 
 ```{r mcell_import}
 # import UMI table
-mcell_import_multi_scmat_10x(mat_nm="mat_nowholev2",dataset_table_fn="10x_import_table.txt",force=T,base_dir="/users/asebe/asebe/proj/scRNA_xenia/Cellranger/")
+mcell_import_multi_scmat_10x(mat_nm="mat_nowholev2",dataset_table_fn=file.path(cluster_dir,"10x_import_table.txt"),force=T,base_dir="/users/asebe/asebe/proj/scRNA_xenia/Cellranger/")
+
 mat_nowholev2=scdb_mat("mat_nowholev2")
-kill_nowholev2=setdiff(colnames(mat_nowholev2@mat),orig_cell_names)
-mcell_mat_ignore_cells("mat_nowholev2","mat_nowholev2",ig_cells=kill_nowholev2)
-mat_nowholev2=scdb_mat("mat_nowholev2")
+
+# if filtering cells additionally
+# kill_nowholev2=setdiff(colnames(mat_nowholev2@mat),orig_cell_names)
+# mcell_mat_ignore_cells("mat_nowholev2","mat_nowholev2",ig_cells=kill_nowholev2)
+# mat_nowholev2=scdb_mat("mat_nowholev2")
 ```
 
 Filter by cell depth (UMIs/cell)
@@ -92,8 +95,8 @@ mat_nowholev2=scdb_mat("mat_nowholev2")
 Calculate gene statistics
 
 ```{r mcell_gstat}
-mcell_add_gene_stat(gstat_id = "gstat", mat_id = mat_nm_filt, force = TRUE)
-mat <- scdb_mat(mat_nm_filt)
+mcell_add_gene_stat(gstat_id = "gstat", mat_id = "mat_nowholev2", force = TRUE)
+mat <- scdb_mat("mat_nowholev2")
 ```
 
 ## Building metacells

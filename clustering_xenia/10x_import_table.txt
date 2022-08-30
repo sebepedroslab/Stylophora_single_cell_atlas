@@ -1,0 +1,4 @@
+Batch.Set.ID	mat_fn	genes_fn	cells_fn
+whole_v3	whole_v3/outs/filtered_feature_bc_matrix/matrix.mtx	whole_v3/outs/filtered_feature_bc_matrix/features.tsv	whole_v3/outs/filtered_feature_bc_matrix/barcodes.tsv
+stalk_v2	stalk_v2/outs/filtered_feature_bc_matrix/matrix.mtx	stalk_v2/outs/filtered_feature_bc_matrix/features.tsv	stalk_v2/outs/filtered_feature_bc_matrix/barcodes.tsv
+tentacle_v2	tentacle_v2/outs/filtered_feature_bc_matrix/matrix.mtx	tentacle_v2/outs/filtered_feature_bc_matrix/features.tsv	tentacle_v2/outs/filtered_feature_bc_matrix/barcodes.tsv
