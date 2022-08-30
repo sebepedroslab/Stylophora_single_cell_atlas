@@ -17,7 +17,7 @@ require(rasterpdf)
 #' 
 #' @param input_table data.frame with three columns: metacell, cell_type and color,
 #'    or a path to tsv file with this table
-#' @param mc_object loaded metacell object (`gMCCov` class)
+#' @param mc_object loaded metacell object (`tgMCCov` class)
 #' @param mat_object loaded single cell matrix object (`tgScMat` class)
 #'  
 #' @return analogous mc_object for cell types
@@ -265,7 +265,7 @@ scp_batch_distribution <- function(
 #' Plots heatmap of gene expression fold change for metacells (and optionally, 
 #' for single cells).
 #' 
-#' @param mc_object loaded metacell object (`gMCCov` class)
+#' @param mc_object loaded metacell object (`tgMCCov` class)
 #' @param mat_object loaded single cell matrix object (`tgScMat` class)
 #' @param black_list character, blacklisted genes
 #' @param output_file output file name without extension, all output files 
