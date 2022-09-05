@@ -290,21 +290,38 @@ mat <- scdb_mat(mat_id)
 Nvec data
 
 ```{r load_nvec_comp, eval=TRUE}
-old_mcfp <- read.table("clustering_nematostella/Nvec_metacell_gene_FC")
-old_assign <- fread("clustering_nematostella/Nvec_metacell_assignments")
-old_annot <- "clustering_nematostella/Nvec_metacell_annotation"
+old_mcfp <- read.table("clustering_nematostella/scdb/Nvec_adult_metacell_gene_FC")
+old_assign <- fread("clustering_nematostella/scdb/Nvec_adult_metacell_assignments")
+old_annot <- "clustering_nematostella/scdb/Nvec_adult_metacell_annotation"
 setnames(old_assign,c("cell","metacell"))
 colnames(old_mcfp) <- str_remove(colnames(old_mcfp),"X")
 var_genes <- names(which(apply(old_mcfp,1,max)>2))
+```
+
+Match orthologs
+
+```{r}
+mc_fp <- mc@mc_fp
+og_pairs <- fread("annotation/og_pairs_metazoa/Xesp_Nvec_og_pairs.txt", header = FALSE)
+
+# match orthologs, multiplying entries when necessary
+og_pairs_matched <- rbindlist(lapply(rownames(mc_fp), function(x) {
+  if (x %in% og_pairs$V1) {
+    og_pairs[V1==x]
+  } else {
+    data.table(V1=x, V2=x)
+  }
+}))
+mc_mc_fp <- mc_fp[og_pairs_matched$V1,]
+rownames(mc_mc_fp) <- og_pairs_matched$V2
 ```
 
 Correlation with Nvec
 
 ```{r nvec_comp}
 cor_method <- "spearman"
-comp_method = "jaccard"
 cors <- sca_clustering_correlation(
-  matrix1 = old_mcfp, matrix2 = mc@mc_fp, 
+  matrix1 = old_mcfp, matrix2 = mc_mc_fp, 
   markers = var_genes, 
   original_ordering_1st = TRUE, original_ordering_2nd = TRUE,
   annotation_file_1 = old_annot,
@@ -313,12 +330,13 @@ cors <- sca_clustering_correlation(
   height = 1000, width = 1200
 )
 lfc_threshold <- 1.2
+cor_method = "jaccard"
 jacc <- sca_clustering_comparison(
-  matrix1 = old_mcfp, matrix2 = mc@mc_fp, markers = var_genes, lfc_threshold = lfc_threshold,
-  original_ordering_1st = TRUE, original_ordering_2nd = TRUE, comp_method = comp_method, 
+  matrix1 = old_mcfp, matrix2 = mc_mc_fp, markers = var_genes, fc_thrs = lfc_threshold,
+  original_ordering_1st = TRUE, original_ordering_2nd = TRUE, cor_method = cor_method, 
   annotation_file_1 = old_annot,
   output_file = file.path(
-    scdb_fig_dir,sprintf("xenia_%s_vs_nvec_%s_%s.png",mc_id,comp_method,lfc_threshold)
+    scdb_fig_dir,sprintf("xenia_%s_vs_nvec_%s_%s.png",mc_id,cor_method,lfc_threshold)
   ), height = 2300, width = 2400
 )
 ```
