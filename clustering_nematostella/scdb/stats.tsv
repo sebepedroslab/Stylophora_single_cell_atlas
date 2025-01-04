@@ -1,0 +1,2 @@
+dataset	cells	UMI_per_cell	total_reads_per_cell	mapped_reads_per_cell	gene_mapped	mapped_reads_per_UMI
+Nvec_v3	13995	1134	35245	14275	6436	13.2290076335878
